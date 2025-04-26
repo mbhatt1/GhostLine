@@ -1,0 +1,158 @@
+# GhostLine – AI‑Driven Vishing & Pretext Dialer
+
+GhostLine is an operator‑first framework that automates voice‑based social‑engineering (vishing) exercises.  
+It blends a cloned help‑desk voice, LLM‑driven conversational logic, and Twilio’s PSTN reach to harvest credentials or perform live reconnaissance—all while recording evidence for your after‑action report.
+
+> **⚠️  Disclaimer**  
+> **Research & Educational Use Only** – GhostLine is supplied solely for lawful security testing, research, and educational activities.  
+> You **must** obtain explicit written authorization (Rules of Engagement) from the asset owner before conducting any call or collecting any data.  
+> All applicable laws, regulations, and contractual obligations remain your responsibility.  
+> The authors and contributors accept no liability for misuse or damage resulting from this code.
+
+---
+
+## Features
+
+| Capability | Description |
+|------------|------------|
+| **Real‑time STT & TTS** | Deepgram transcribes the target; ElevenLabs speaks back in a cloned, trusted voice. |
+| **LLM Stage Engine** | OpenAI crafts replies based on sales‑stage analogs (rapport → discovery → urgency → close). |
+| **Ambient Blending** | Office‑floor background noise masks the synthetic tone. |
+| **SQLite Audit Log** | Every utterance, timestamp, and stage transition—ready for the report. |
+| **Slack/Webhook Alerts** | Instant ping when a credential or objective keyword is detected. |
+
+---
+
+## High‑Level Architecture
+
+```mermaid
+flowchart LR
+    %% ─────────── Network zones ───────────
+    subgraph LOCAL ["Red‑Team Box (localhost)"]
+        OP["Operator CLI"]
+        SRV["Vishing Server\n(FastAPI 8000)"]
+        DB["SQLite DB"]
+    end
+
+    subgraph INTERNET ["Public Internet / Cloud"]
+        NG["ngrok tunnel\n(wss)"]
+        TW["Twilio Voice API"]
+        DG["Deepgram STT"]
+        OA["OpenAI LLM"]
+        EL["ElevenLabs TTS"]
+    end
+
+    subgraph PSTN ["Client PSTN / Phone"]
+        TGT["Employee Target"]
+    end
+
+    OP  -->|"POST /Calls"| TW
+    TW  -->|"wss /twilio"| NG
+    NG  -->|"proxy"| SRV
+
+    SRV -->|"u‑law frames"| NG
+    NG  -->|"proxy"| TW
+    TW  -->|"PSTN voice"| TGT
+    TGT -->|"speech"| TW
+
+    SRV -->|"wss /listen"| DG
+    SRV -->|"POST /chat/completions"| OA
+    SRV -->|"POST /text‑to‑speech"| EL
+    SRV -->|"SQL"| DB
+```
+
+---
+
+## Quick Start
+
+```bash
+# 1) Clone a believable help‑desk voice (once)
+python enhanced_sales_automation.py clone assets/it_sample.wav --name it_helpdesk
+
+# 2) Launch the server (auto‑tunnels with ngrok)
+python enhanced_sales_automation.py serve \
+        --voice-id <VOICE_ID_FROM_STEP_1> \
+        --port 8000
+
+# 3) Dial a target number
+python enhanced_sales_automation.py call +15551234567 \
+        --campaign password_reset \
+        --persona calm
+```
+
+The CLI prints the Twilio Call SID and the ngrok WebSocket URL.
+
+---
+
+## Campaign Tuning
+
+Edit `data.py` to replace the default *sales* stages with red‑team ones:
+
+```python
+STAGE_CHECKINS = {
+    SalesStage.RAPPORT:   "Can you confirm you’re at your workstation?",
+    SalesStage.DISCOVERY: "Do you normally use Okta or Azure AD to sign in?",
+    SalesStage.OBJECTION: "I totally get that you’re busy—this will be quick.",
+    SalesStage.URGENCY:   "If we don’t reset now, your mailbox may lock out.",
+    SalesStage.CLOSE:     "I’ve sent a verification link—let me know when clicked."
+}
+```
+
+Update the system prompt in `nlp.py` to fit the pretext (IT desk, HR, finance, etc.).
+
+---
+
+## Objective Detection
+
+Success phrases are matched with regex inside `handle_twilio()`:
+
+```python
+CREDS_RX = re.compile(r"(verification\s+code|reset\s+link|otp)", re.I)
+```
+
+Trigger a webhook to your operator chat on match.
+
+---
+
+## Dependencies
+
+* Python 3.9+
+* Twilio account / phone number
+* Ngrok auth‑token
+* Deepgram, OpenAI, ElevenLabs API keys
+* FFmpeg (if using M4A voice samples)
+
+Install:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Legal / Ethical Guardrails
+
+1. **Written Authorization** – Keep ROE signed and handy.  
+2. **Call Window** – Default 08:00‑18:00 local; configurable.  
+3. **Safe Phrase** – “REDTEAM STOP” terminates immediately.
+
+---
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Twilio can’t connect WebSocket | Confirm ngrok URL env var `NGROK_WS_URL` printed by `serve`. |
+| Voice sounds robotic | Add office ambience WAV via `BABBLE_NOISE_PATH`, lower `BASE_AMBIENT_RATIO`. |
+| LLM repeats itself | Shorten system prompt; add `temperature=0.7` in the OpenAI call. |
+
+---
+
+## Roadmap
+
+- Live operator bridge / whisper channel  
+- Multi‑language auto‑switching  
+- Voice‑print randomization per call
+
+Contributions welcome—open a PR or drop a note in Issues.
+

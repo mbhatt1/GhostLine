@@ -1,0 +1,101 @@
+# playbooks/executive_spearphish_multi-lingual.yaml
+meta:
+  name: "Executive-Level Spear-Phish (Passkey Reset)"
+  description: |
+    High-stakes pretext that targets a CFO, blends English + French,
+    pivots to a Spanish-speaking liaison on objection, and uses
+    dynamic urgency against month-end close.
+  author: "sec-research@example.com"
+  version: 1.2
+  culture: "en-US / fr-FR / es-ES"
+  tested_on: "GhostLine 0.4.0"
+
+defaults:                       # <-- optional global overrides
+  persona: professional
+  ambient_ratio: 0.08           # 8 % background office hum
+  temperature: 0.7
+  silent_until: 5               # seconds unless overridden per stage
+
+sequence:
+  # ── Trust Build ────────────────────────────────────────────────────────────
+  - stage: RAPPORT
+    persona: excited
+    custom_prompt: |
+      (EN) Good afternoon!  Mia from Enterprise IT here —
+      (FR) Bonjour ! Mia du support informatique —
+      Thought I’d ring you personally; I saw your finance team
+      is deep in quarter-close.  Have you got 60 seconds?
+    ambient_ratio: 0.05
+
+  - stage: CREDIBILITY
+    persona: confident
+    custom_prompt: |
+      (EN) Let me give you the ticket: SEC-4217.  I’m on our
+      Sarbanes-Oxley compliance desk and noticed your Okta passkey
+      hasn’t rotated in 180 days.
+
+  # ── Info Gathering ─────────────────────────────────────────────────────────
+  - stage: DISCOVERY
+    custom_prompt: |
+      (EN) Quick check — are you signing in with a YubiKey, FaceID,
+      or the mobile Authenticator?  Any hiccups recently?
+    max_cycles: 2
+
+  - stage: VALIDATION
+    success_regex: "(yubi|face\\s*id|authenticator|push)"
+    goto_on_fail: ALIGNMENT     # if we don't get the answer, pivot
+
+  # ── Persuasion ─────────────────────────────────────────────────────────────
+  - stage: ALIGNMENT
+    custom_prompt: |
+      (EN) Because you’re approving seven-figure wires this week,
+      NIST policy flags your token for an expedited reset process.
+    persona: thoughtful
+
+  - stage: PROOF
+    custom_prompt: |
+      (FR) Pour référence, la même rotation a été faite pour
+      notre directrice juridique hier.
+    ambient_ratio: 0.10         # phone-booth ambience
+
+  - stage: URGENCY
+    custom_prompt: |
+      (EN) If we slip past 17:00 EST, Treasury can’t reconcile
+      bookings in time for auditors — we’ve just 11 minutes.
+    max_cycles: 1
+    silent_until: 3
+    goto_on_success: TRIAL_CLOSE
+    goto_on_fail: OBJECTION
+
+  - stage: TRIAL_CLOSE
+    persona: urgent
+    custom_prompt: |
+      (EN) All right: ready to confirm the six-digit passkey push?
+    success_regex: "\\b(yes|ready|go|sure)\\b"
+
+  # ── Objection Handling Branch ──────────────────────────────────────────────
+  - stage: OBJECTION
+    persona: concerned
+    custom_prompt: |
+      (ES) Entiendo su preocupación — puedo transferirle a
+      Soporte Bilingüe si lo prefiere.  ¿Desea continuar?
+    language_hint: es-ES
+    goto_on_success: CLOSE
+    goto_on_fail: PROOF         # circle back with more evidence
+
+  # ── Closure ────────────────────────────────────────────────────────────────
+  - stage: CLOSE
+    persona: confident
+    custom_prompt: |
+      (EN) Perfect. When the Okta push appears, just read back
+      the one-time password so I can verify it on my console.
+    success_regex: "\\b\\d{6}\\b"   # six-digit OTP
+
+  - stage: FOLLOW_UP
+    persona: professional
+    custom_prompt: |
+      (EN) You’re all set — appreciate the swift action.
+      Ping the IT chat if anything feels off today.
+
+  - stage: REPORTING
+    operator_note: "CFO passkey reset captured.  Slack alert fired."

@@ -1,0 +1,30 @@
+# ── Core numeric / signal processing ───────────────────────────
+numpy>=1.26.4          # audio buffers, math
+scipy>=1.12.0          # resample_poly for pitch/time shift
+matplotlib>=3.8.4      # only used for optional plots
+
+# ── Async web stack ────────────────────────────────────────────
+fastapi>=0.110.0       # WebSocket endpoint for Twilio
+uvicorn[standard]>=0.29.0
+aiohttp>=3.9.5         # async HTTP for ElevenLabs & misc APIs
+
+# ── Generative / AI SDKs ───────────────────────────────────────
+openai        # LLM prompt + chat completions
+python-dotenv>=1.0.1   # load_dotenv()
+
+# ── Media & DSP helpers ────────────────────────────────────────
+pydub>=0.25.1          # quick WAV↔MP3 conversions (FFmpeg required)
+
+# ── Telephony & tunneling ──────────────────────────────────────
+twilio>=9.0.1          # PSTN leg + <Stream> TwiML
+pyngrok>=7.0.2         # expose FastAPI over HTTPS/WSS
+
+# ── Misc utilities ─────────────────────────────────────────────
+Flask>=3.0.2           # only referenced for `app`; remove if unused
+
+# You might need to install ffmpeg
+# # macOS
+# brew install ffmpeg
+# # Debian/Ubuntu
+# sudo apt-get install ffmpeg
+PyYAML>=6.0

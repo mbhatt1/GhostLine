@@ -1,0 +1,62 @@
+meta:
+  name: "HR Benefits – Open-Enrollment Credential Grab"
+  description: |
+    Friendly HR rep guides employee to “new portal” during annual
+    open-enrolment.  Uses loss-aversion (higher premiums) and
+    companionship tone to elicit SSO login.
+  author: "ghostline-crew"
+  version: 1.1
+  culture: "en-US"
+
+defaults:
+  persona: soothing
+  silent_until: 6
+  ambient_ratio: 0.05
+  temperature: 0.6
+
+sequence:
+  - stage: RAPPORT
+    persona: excited
+    custom_prompt: |
+      Happy Friday!  I’m Lily with HR Benefits.  I saw you booked PTO—
+      mind if we knock out your enrolment real quick?
+  - stage: CREDIBILITY
+    custom_prompt: |
+      I handle Tier-2 escalations; pulling your Workday profile now.
+      Looks like last benefit update was 2023-04-17.
+  - stage: DISCOVERY
+    success_regex: "\\b(single|married|family)\\b"
+    custom_prompt: |
+      To tailor rates: filing status—Single, Married, or Family?
+  - stage: VALIDATION
+    custom_prompt: |
+      Perfect, got it.  And still ZIP 98109?
+  - stage: ALIGNMENT
+    persona: thoughtful
+    custom_prompt: |
+      New PPO plan chops $72 monthly and bumps telehealth credits.
+      Worth a peek?
+  - stage: PROOF
+    custom_prompt: |
+      We piloted this with Engineering; survey score jumped 24 %.
+  - stage: URGENCY
+    persona: urgent
+    max_cycles: 1
+    custom_prompt: |
+      Portal freezes selections at 17:00 PST today—otherwise default
+      rolls +7 % premium.
+  - stage: TRIAL_CLOSE
+    success_regex: "\\b(yeah|sure|sounds good|okay)\\b"
+  - stage: CLOSE
+    persona: professional
+    custom_prompt: |
+      Great.  Browse to enrol.hr-portal.com on your laptop/phone and tap
+      “SSO”.  When the six-digit code appears, just read it to me—we’ll
+      lock your new coverage.
+    success_regex: "\\b\\d{6}\\b"       # 6-digit SSO code
+  - stage: FOLLOW_UP
+    custom_prompt: |
+      Premium confirmation email will hit in 5 min; ping me if it
+      doesn’t show.  Thanks a ton!
+  - stage: REPORTING
+    operator_note: "SSO code captured; enrolment link clicked."

@@ -4,7 +4,6 @@
 import sqlite3
 
 
-DB_CONN = None
 
 def init_db(path):
     conn = sqlite3.connect(path, check_same_thread=False)
@@ -71,3 +70,6 @@ def init_db(path):
 
     conn.commit()
     return conn
+
+
+DB_CONN = init_db("sales_tracking.db")

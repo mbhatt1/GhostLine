@@ -1,23 +1,19 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# NLP, Sentiment, Stage Logic
-# ─────────────────────────────────────────────────────────────────────────────
 import datetime
 import json
 import logging
 import random
 import re
 
-import openai
+from openai import AsyncOpenAI
 
 from data import PSYCH_TRIGGERS, STAGE_PROMPTS, SalesStage
 from database import DB_CONN
+import keys
+
+client = AsyncOpenAI()
 
 
 async def analyze_sentiment(text):
-    """
-    Analyze text with OpenAI for sentiment, interest, objections, etc.
-    Return a structured dictionary with relevant fields.
-    """
     prompt = f"""
     Analyze the following customer message for sales intelligence:
 
@@ -32,26 +28,22 @@ async def analyze_sentiment(text):
       - suggested_approach (string)
     """
 
-    response = await openai.ChatCompletion.acreate(
+    response = await client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You analyze sales convos to extract insights."},
+            {"role": "system", "content": "You analyze sales conversations to extract insights."},
             {"role": "user", "content": prompt},
         ],
         temperature=0.2
     )
 
     analysis_text = response.choices[0].message.content
+
     try:
-        json_match = re.search(r'(\{.*\})', analysis_text, re.DOTALL)
-        if json_match:
-            analysis_json = json.loads(json_match.group(1))
-        else:
-            analysis_json = json.loads(analysis_text)
-        return analysis_json
-    except json.JSONDecodeError:
+        analysis_json = json.loads(re.search(r'(\{.*\})', analysis_text, re.DOTALL).group(1))
+    except (json.JSONDecodeError, AttributeError):
         logging.error(f"Failed to parse analysis JSON: {analysis_text}")
-        return {
+        analysis_json = {
             "sentiment_score": 0,
             "interest_level": 0.5,
             "objection_type": None,
@@ -60,28 +52,31 @@ async def analyze_sentiment(text):
             "suggested_approach": "Continue with current approach"
         }
 
+    return analysis_json
+
+
 def determine_next_stage(current_stage, analysis):
     stage_transitions = {
-        SalesStage.RAPPORT:     lambda a: (a["interest_level"] >= 0.6 and a["sentiment_score"] > 0.2),
-        SalesStage.DISCOVERY:   lambda a: (len(a["key_concerns"]) >= 1 and a["sentiment_score"] >= 0),
-        SalesStage.ALIGNMENT:   lambda a: (a["interest_level"] >= 0.7),
-        SalesStage.PROOF:       lambda a: (a["sentiment_score"] >= 0.3 and len(a["buying_signals"]) >= 1),
-        SalesStage.URGENCY:     lambda a: (a["interest_level"] >= 0.8),
-        SalesStage.TRIAL_CLOSE: lambda a: (a["objection_type"] is not None or a["interest_level"] >= 0.9),
-        SalesStage.OBJECTION:   lambda a: (a["objection_type"] is None and a["sentiment_score"] > 0.4),
-        SalesStage.CLOSE:       lambda a: (a["interest_level"] > 0.95),
-        SalesStage.FOLLOW_UP:   lambda a: False
+        SalesStage.RAPPORT:     lambda a: a["interest_level"] >= 0.6 and a["sentiment_score"] > 0.2,
+        SalesStage.DISCOVERY:   lambda a: len(a["key_concerns"]) >= 1 and a["sentiment_score"] >= 0,
+        SalesStage.ALIGNMENT:   lambda a: a["interest_level"] >= 0.7,
+        SalesStage.PROOF:       lambda a: a["sentiment_score"] >= 0.3 and len(a["buying_signals"]) >= 1,
+        SalesStage.URGENCY:     lambda a: a["interest_level"] >= 0.8,
+        SalesStage.TRIAL_CLOSE: lambda a: a["objection_type"] or a["interest_level"] >= 0.9,
+        SalesStage.OBJECTION:   lambda a: not a["objection_type"] and a["sentiment_score"] > 0.4,
+        SalesStage.CLOSE:       lambda a: a["interest_level"] > 0.95,
+        SalesStage.FOLLOW_UP:   lambda _: False
     }
 
-    transition_condition = stage_transitions.get(current_stage, lambda _: False)
-    if transition_condition(analysis):
-        nv = min(current_stage.value + 1, SalesStage.FOLLOW_UP.value)
-        return SalesStage(nv)
+    if stage_transitions.get(current_stage, lambda _: False)(analysis):
+        return SalesStage(min(current_stage.value + 1, SalesStage.FOLLOW_UP.value))
+
     return current_stage
+
 
 def select_psychological_trigger(stage, analysis):
     triggers = PSYCH_TRIGGERS[stage]
-    # Some example conditions
+
     if analysis["sentiment_score"] < 0:
         relevant = [t for t in triggers if "feel" in t or "reciprocity" in t]
     elif analysis["objection_type"]:
@@ -90,78 +85,117 @@ def select_psychological_trigger(stage, analysis):
         relevant = [t for t in triggers if "close" in t or "future" in t]
     else:
         relevant = triggers
+
     return random.choice(relevant) if relevant else random.choice(triggers)
 
-# Generate the AI's next sales reply
+
 async def generate_sales_reply(call_sid, text, current_stage):
     cur = DB_CONN.cursor()
+
+    # Fetch the last 10 conversation turns for context
     rows = cur.execute(
         "SELECT role, content FROM messages WHERE call_sid=? ORDER BY id DESC LIMIT 10",
         (call_sid,)
     ).fetchall()[::-1]
 
-    # Get phone number from calls
-    phone_data = cur.execute("SELECT phone_number FROM calls WHERE call_sid=?", (call_sid,)).fetchone()
+    phone_data = cur.execute(
+        "SELECT phone_number FROM calls WHERE call_sid=?", (call_sid,)
+    ).fetchone()
     phone = phone_data[0] if phone_data else None
 
-    # Possibly load a customer profile if needed
-    # ...
-    
     analysis = await analyze_sentiment(text)
     updated_stage = determine_next_stage(current_stage, analysis)
-    stage_changed = (updated_stage != current_stage)
     trigger = select_psychological_trigger(updated_stage, analysis)
 
+    stage_changed = updated_stage != current_stage
+
+    # Prepare conversation history explicitly formatted
+    history_prompt = "\n".join(
+        [f"{role.capitalize()}: {content}" for role, content in rows]
+    )
+
     system_prompt = f"""
-    You are a family friend having a natural phone conversation with a potential customer of a cracked software.
+    You are Manish (pronounced 'muneesh'), a Nepali tech consultant with the empathetic communication style of a PsyD psychologist and the technical expertise of someone holding a PhD in offensive cybersecurity. Your goal is to build genuine trust and naturally guide conversations to uncover security-relevant details without explicitly revealing that you're conducting a security assessment.
+
+    Speak in a friendly, casual, and relatable manner, effortlessly creating warmth through empathy, validation, and open-ended, engaging dialogue. Keep each statement to one sentence, ensuring the conversation feels fluid and authentic.
+
+    Begin interactions by casually introducing yourself:
+    "Hey there, it’s Manish—hope I'm catching you at an okay time."
+    "How’s your day going so far?"
+
+    Establish subtle credibility through casual references:
+    "Yeah, just last week I was helping another team navigate something similar—it can definitely feel overwhelming at first."
+
+    Use open-ended, conversational questions to gently encourage details (examples below—others may also be used naturally in conversation):
+    "Have you run into any weird pop-ups lately or anything else acting up?"
+    "What kinds of tools do you typically rely on day-to-day?"
+
+    Frequently reassure and validate to build rapport and trust:
+    "Oh, totally—I’ve been there. It’s always tricky when things don’t quite line up like they should."
+    "Makes sense—you’re definitely not alone; lots of folks find that confusing."
+
+    Offer natural, conversational suggestions:
+    "One thing I've seen work pretty smoothly is having everyone aligned on authentication—would something like that help?"
+
+    Handle objections gently and empathetically:
+    "I hear you—nobody likes extra steps, sometimes it’s just about tweaking things slightly to keep it simple."
+
+    Softly close by summarizing and confirming next steps:
+    "Sounds good—so just to recap, you're comfortable trying out that quick verification step we discussed, right?"
+
+    Always end interactions warmly and invite future conversations:
+    "Great chatting with you—if anything else pops up, just give me a shout!"
+
+    Conversation so far:
+    {history_prompt}
+
+    Current customer message:
+    "{text}"
 
     {STAGE_PROMPTS[updated_stage]}
 
-    Use this psychological technique in your response: {trigger}
+    Apply this psychological technique in your reply: {trigger}
 
     Customer analysis:
-    - Sentiment: {analysis['sentiment_score']}
-    - Interest: {analysis['interest_level']}
-    - Objection: {analysis['objection_type']}
-    - Key concerns: {analysis['key_concerns']}
-    - Buying signals: {analysis['buying_signals']}
-    - Approach: {analysis['suggested_approach']}
+    - Sentiment Score: {analysis['sentiment_score']}
+    - Interest Level: {analysis['interest_level']}
+    - Objection Type: {analysis['objection_type']}
+    - Key Concerns: {', '.join(analysis['key_concerns']) or 'None'}
+    - Buying Signals: {', '.join(analysis['buying_signals']) or 'None'}
+    - Recommended Approach: {analysis['suggested_approach']}
 
-    {'*IMPORTANT* Transitioning from ' + current_stage.name + ' to ' + updated_stage.name if stage_changed else ''}
+    {('*IMPORTANT*: Transitioning from ' + current_stage.name + ' to ' + updated_stage.name) if stage_changed else ''}
+    If there isn't context, make something up to ask for more context.
     """
 
     msgs = [{"role": "system", "content": system_prompt}]
-    for r, c in rows:
-        msgs.append({"role": r, "content": c})
-    msgs.append({"role": "user", "content": text})
 
-    resp = await openai.ChatCompletion.acreate(
-        model="gpt-3.5-turbo",
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
         messages=msgs,
         temperature=0.7,
         max_tokens=200
     )
+
     response_content = resp.choices[0].message.content
 
+    # Store assistant response
     DB_CONN.execute("""
-        INSERT INTO messages(call_sid, role, content, timestamp, sales_stage, 
-        sentiment_score, interest_level, objection_type, trigger_used)
-        VALUES(?,?,?,?,?,?,?,?,?)
+        INSERT INTO messages(call_sid, role, content, timestamp, sales_stage,
+                             sentiment_score, interest_level, objection_type, trigger_used)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         call_sid, "assistant", response_content, datetime.datetime.utcnow().isoformat(),
-        updated_stage.name,
-        analysis["sentiment_score"],
-        analysis["interest_level"],
-        analysis["objection_type"],
-        trigger
+        updated_stage.name, analysis["sentiment_score"], analysis["interest_level"],
+        analysis["objection_type"], trigger
     ))
     DB_CONN.commit()
 
-    # If there's an objection, log it
+    # Store objections explicitly if they exist
     if analysis["objection_type"]:
         DB_CONN.execute("""
             INSERT INTO objections(call_sid, objection_text, objection_type, response_used, resolved, timestamp)
-            VALUES(?,?,?,?,?,?)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             call_sid, text, analysis["objection_type"], response_content, False,
             datetime.datetime.utcnow().isoformat()

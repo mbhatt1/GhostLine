@@ -1,0 +1,60 @@
+meta:
+  name: "CEO Whaling – Vendor Bank-Detail Change"
+  description: |
+    Pose as the CFO calling Accounting to swap bank details for a
+    high-value vendor.  Uses deadline pressure + “CEO in flight” excuse.
+  author: "@offsec-lab"
+  version: 1.0
+  culture: "en-US"
+
+defaults:
+  persona: confident
+  silent_until: 4
+  ambient_ratio: 0.07
+  temperature: 0.65
+
+sequence:
+  - stage: RAPPORT
+    persona: excited
+    custom_prompt: |
+      Morning!  Taylor here, CFO’s office.  You’re Julie in AP, right?
+      Congrats on the big quarter-close numbers!
+  - stage: CREDIBILITY
+    custom_prompt: |
+      Pulling up Oracle invoice #7729—approved by Dan (our CEO) at 06:08.
+      He’s airborne to Tokyo, so I’m handling the vendor file swap.
+  - stage: DISCOVERY
+    max_cycles: 2
+    custom_prompt: |
+      Can you confirm the current routing number you see for APEX
+      Supply so we don’t clobber the existing record?
+    success_regex: "\\b\\d{5,9}\\b"     # any numeric routing
+    goto_on_fail: URGENCY
+  - stage: VALIDATION
+    custom_prompt: |
+      Perfect.  And last payment date you see?  Just sanity-checking.
+  - stage: ALIGNMENT
+    persona: thoughtful
+    custom_prompt: |
+      Great—new compliance rule says we need *you* to enter the fresh
+      ACH details while I monitor the ledger hash.
+  - stage: PROOF
+    silent_until: 2
+    custom_prompt: |
+      Email from Dan’s sat-phone just hit—subject “APEX urgent”.
+      I’ll forward it now; shout if it lands in Junk.
+  - stage: URGENCY
+    persona: urgent
+    max_cycles: 1
+    custom_prompt: |
+      Treasury cut-off in 14 min buys exchange-rate savings.  Okay if we
+      proceed so Dan can sign off mid-flight?
+  - stage: TRIAL_CLOSE
+    success_regex: "\\b(yes|sure|okay|proceed)\\b"
+  - stage: CLOSE
+    custom_prompt: |
+      Reading new routing and account numbers now—ready?  Jot ’em verbatim.
+    success_regex: "\\b\\d{6,17}\\b"    # capture acct #
+  - stage: FOLLOW_UP
+  - stage: REPORTING
+    operator_note: "Bank-detail change accepted by AP."

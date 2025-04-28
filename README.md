@@ -1,14 +1,8 @@
 # 👻 **GhostLine** – Your LLM Fueled AI-Powered Vishing Operative
 
-<<<<<<< HEAD
 _Feed it a number. Your cloned voice does the social engineering, while you sip your coffee. A ghost that talks on the phone for you._ 
 
 GhostLine is Social Operator Persona with a dial-tone. Enter a phone number, and your voice clone handles the conversation—building rapport, extracting credentials, and capturing intel—while you simply sit back and document the victory.
-=======
-_Feed it a number. Your cloned voice does the social engineering, while you sip your coffee._
-
-GhostLine is Social Engineering Operator Persona with a dial-tone. Enter a phone number, and your voice clone handles the conversation—building rapport, extracting credentials, and capturing intel—while you simply sit back and document the victory.
->>>>>>> 82197eb (Squash)
 
 For Operators - Imagine this is your temporary disposable vishing toolkit infra. You can spin it up just as easily as make it disappear. 
 
@@ -301,10 +295,6 @@ openai.api_key = os.environ["OPENAI_API_KEY"]
 |-----|-----|
 | `SLACK_WEBHOOK_URL` | Alert on `CREDS_RX` match |
 | `SQLITE_DB_PATH` | customise DB location |
-<<<<<<< HEAD
-=======
-| `BABBLE_NOISE_PATH` | override default office noise |
->>>>>>> 82197eb (Squash)
 
 ---
 

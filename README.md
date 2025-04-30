@@ -8,6 +8,8 @@ For Operators - Imagine this is your temporary disposable vishing toolkit infra.
 
 _No signed Rules of Engagement? No dialing. GhostLine is intended strictly for authorized security assessments only. Be good, and hack on ethically!_
 
+<img width="176" alt="image" src="https://github.com/user-attachments/assets/a80e5626-074a-4b4b-b5e8-f71c7402a34a" />
+
 ---
 
 ## 📑 Index  
@@ -178,8 +180,28 @@ flowchart TD
     classDef cli fill:#1e40af,color:#fff
     class A,B,C cli
 ```
+Persuasion Algorithm: 
+```mermaid
+stateDiagram-v2
+    [*] --> RAPPORT
+    RAPPORT --> CREDIBILITY : establish connection
+    CREDIBILITY --> OBJECTION_HANDLING : credentials challenged
+    CREDIBILITY --> URGENCY : credibility accepted
+    OBJECTION_HANDLING --> URGENCY : objection resolved
+    OBJECTION_HANDLING --> FAILURE : objection unresolved
+    URGENCY --> INFORMATION_GATHERING : urgency accepted
+    URGENCY --> OBJECTION_HANDLING : urgency challenged
+    INFORMATION_GATHERING --> CREDENTIAL_CAPTURE : trust built
+    INFORMATION_GATHERING --> OBJECTION_HANDLING : resistance encountered
+    CREDENTIAL_CAPTURE --> CONFIRMATION : credentials obtained
+    CREDENTIAL_CAPTURE --> OBJECTION_HANDLING : suspicion raised
+    CONFIRMATION --> SUCCESS : confirmed
+    CONFIRMATION --> FAILURE : denied
+    FAILURE --> [*]
+    SUCCESS --> [*]
+```
 
-**Thread model**  `handle_twilio()` spawns three coroutines—`pump_in`, `pump_out`, `silence_monitor`—per call. FastAPI stays single‑process.
+**Thread model**  `handle()` spawns three coroutines—`pump_in`, `pump_out`, `silence_monitor`—per call. FastAPI stays single‑process.
 
 ### 🔍 Red‑Team Architecture Wins
 
@@ -289,13 +311,6 @@ os.environ["NGROK_AUTHTOKEN"] = "<NGROK_AUTHTOKEN>"        # Your ngrok Auth Tok
 openai.api_key = os.environ["OPENAI_API_KEY"]
 ```
 
-### Optional
-
-| Var | Why |
-|-----|-----|
-| `SLACK_WEBHOOK_URL` | Alert on `CREDS_RX` match |
-| `SQLITE_DB_PATH` | customise DB location |
-
 ---
 
 ## Installation
@@ -377,7 +392,8 @@ CREATE TABLE objections (
 - [ ] Playbook branching (`goto_on_*`)  
 - [ ] Whisper‑local STT plugin  
 - [ ] CSV export for transcripts  
-- [ ] Make the voice understand "interruptions". When someone talks over you on the phone you typically get interrupted, and let them talk. 
+- [ ] Make the voice understand "interruptions". When someone talks over you on the phone you typically get interrupted, and let them talk.
+- [ ] Filter background noise.
 
 ---
 

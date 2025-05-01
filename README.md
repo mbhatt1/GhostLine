@@ -4,7 +4,7 @@ _Feed it a number. Your cloned voice does the social engineering, while you sip 
 
 GhostLine is Social Operator Persona with a dial-tone. Enter a phone number, and your voice clone handles the conversation—building rapport, extracting credentials, and capturing intel—while you simply sit back and document the victory.
 
-For Operators - Imagine this is your temporary disposable vishing toolkit infra. You can spin it up just as easily as make it disappear. 
+For Operators - Imagine this is your temporary disposable vishing toolkit automated infra. You can spin it up just as easily as make it disappear. 
 
 _No signed Rules of Engagement? No dialing. GhostLine is intended strictly for authorized security assessments only. Be good, and hack on ethically!_
 

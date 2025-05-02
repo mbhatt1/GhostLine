@@ -422,6 +422,8 @@ GhostLine is released under the MIT License. License is revoked for professional
 
 **Liability & Responsible Use.** You—and only you—bear full legal and ethical responsibility for the use of GhostLine. The maintainers explicitly disclaim all liability for damages, data breaches, reputational harm, or unintended consequences resulting from misuse. Always log your activities thoroughly, practice responsible red teaming, and leave target environments in better shape than you found them.
 
+You must follow terms and conditions for our dependencies such as twilio, deepgram and elevenlabs. This responsibility is sole-ly yours. 
+
 
 © 2025 Shrewd.  Play nice; hack hard.
 

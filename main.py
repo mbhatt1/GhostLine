@@ -138,54 +138,74 @@ class AmbientNoise:
                 idx += len(chunk)
             out += chunk
         self.idx = idx % len(self.buffer)  # Update index only once
-        
-        # Using NumPy for audio mixing
+
+        # Try audioop first, fall back to NumPy if not available
         try:
-            pcm_samples = np.frombuffer(pcm, dtype=np.int16)
-            ambient_samples = np.frombuffer(out, dtype=np.int16)
+            import audioop
+            # Using audioop for audio mixing (original implementation)
+            pcm_boosted = audioop.mul(pcm, 2, 1.5)
+            ambient = audioop.mul(out, 2, ratio)
+            mixed = audioop.add(pcm_boosted, ambient, 2)
+            logger.debug("Mixed audio with ambient noise using audioop (level=%s)",     level)
+            return mixed
+        except (ImportError, Exception) as e:
+            logger.info(f"audioop not available or failed ({type(e).__name__}),     using NumPy fallback")
 
-            # Boost the original audio (equivalent to audioop.mul with factor 1.5)
-            pcm_boosted = (pcm_samples * 1.5).astype(np.int16)
+            # Using NumPy for audio mixing as fallback
+            try:
+                pcm_samples = np.frombuffer(pcm, dtype=np.int16)
+                ambient_samples = np.frombuffer(out, dtype=np.int16)
 
-            # Scale ambient noise (equivalent to audioop.mul with ratio)
-            ambient_scaled = (ambient_samples * ratio).astype(np.int16)
+                # Boost the original audio (equivalent to audioop.mul with factor 1.    5)
+                pcm_boosted = (pcm_samples * 1.5).astype(np.int16)
 
-            # Mix the two signals (equivalent to audioop.add)
-            # Use clipping to prevent integer overflow
-            mixed_samples = np.clip(pcm_boosted + ambient_scaled, -32768, 32767).astype(np.int16)
-            mixed = mixed_samples.tobytes()
-        except Exception as e:
-            logger.error(f"Audio mixing error with NumPy: {e}")
-            return pcm  # Return original audio if mixing fails
+                # Scale ambient noise (equivalent to audioop.mul with ratio)
+                ambient_scaled = (ambient_samples * ratio).astype(np.int16)
 
-        logger.debug("Mixed audio with ambient noise (level=%s)", level)
-        return mixed
+                # Mix the two signals (equivalent to audioop.add)
+                # Use clipping to prevent integer overflow
+                mixed_samples = np.clip(pcm_boosted + ambient_scaled, -32768,   32767).astype(np.int16)
+                mixed = mixed_samples.tobytes()
+                logger.debug("Mixed audio with ambient noise using NumPy fallback   (level=%s)", level)
+                return mixed
+            except Exception as e:
+                logger.error(f"Audio mixing error with NumPy: {e}")
+                return pcm  # Return original audio if mixing fails
 
     @staticmethod
     def ulaw(pcm: bytes) -> bytes:
         try:
-            import numpy as np
-            # Convert PCM bytes to 16-bit samples
-            samples = np.frombuffer(pcm, dtype=np.int16)
-
-            # Normalize to float in range [-1, 1]
-            samples_float = samples.astype(float) / 32768.0
-
-            # µ-law encoding algorithm
-            mu = 255  # mu-law parameter
-            encoded_samples = np.sign(samples_float) * np.log(1 + mu * np.abs   (samples_float)) / np.log(1 + mu)
-
-            # Scale to range [0, 255] for uint8
-            encoded_samples = ((encoded_samples + 1) * 127.5).astype(np.uint8)
-
-            # Convert back to bytes
-            encoded = encoded_samples.tobytes()
-            logger.debug("Converted PCM to µ-law format, %d bytes", len(encoded))
+            # Try audioop first
+            import audioop
+            encoded = audioop.lin2ulaw(pcm, 2)
+            logger.debug("Converted PCM to µ-law format using audioop, %d bytes",   len(encoded))
             return encoded
-        except Exception as e:
-            logger.error(f"Error in µ-law conversion: {e}")
-            # Return a valid but empty µ-law stream
-            return b'\x7f' * (len(pcm) // 4)  # Approximate size reduction
+        except (ImportError, Exception) as e:
+            logger.info(f"audioop not available or failed ({type(e).__name__}),     using NumPy fallback")
+            
+            # Fall back to NumPy implementation
+            try:
+                # Convert PCM bytes to 16-bit samples
+                samples = np.frombuffer(pcm, dtype=np.int16)
+    
+                # Normalize to float in range [-1, 1]
+                samples_float = samples.astype(float) / 32768.0
+    
+                # µ-law encoding algorithm
+                mu = 255  # mu-law parameter
+                encoded_samples = np.sign(samples_float) * np.log(1 + mu * np.abs   (samples_float)) / np.log(1 + mu)
+    
+                # Scale to range [0, 255] for uint8
+                encoded_samples = ((encoded_samples + 1) * 127.5).astype(np.uint8)
+    
+                # Convert back to bytes
+                encoded = encoded_samples.tobytes()
+                logger.debug("Converted PCM to µ-law format using NumPy, %d bytes",     len(encoded))
+                return encoded
+            except Exception as e:
+                logger.error(f"Error in µ-law conversion: {e}")
+                # Return a valid but empty µ-law stream
+                return b'\x7f' * (len(pcm) // 4)  # Approximate size reduction
 
 # ------------------------
 # Playbook Loader

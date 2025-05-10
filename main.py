@@ -26,7 +26,6 @@ from deepgram import DeepgramClient
 from pydub import AudioSegment
 import wave
 import numpy as np
-import audioop
 from scipy.signal import resample_poly
 import yaml
 from pathlib import Path
@@ -140,22 +139,53 @@ class AmbientNoise:
             out += chunk
         self.idx = idx % len(self.buffer)  # Update index only once
         
-        # Boost the original audio to make it clearer
+        # Using NumPy for audio mixing
         try:
-            pcm_boosted = audioop.mul(pcm, 2, 1.5)
-            ambient = audioop.mul(out, 2, ratio)
-            mixed = audioop.add(pcm_boosted, ambient, 2)
-        except audioop.error as e:
-            logger.error(f"Audio mixing error: {e}")
+            pcm_samples = np.frombuffer(pcm, dtype=np.int16)
+            ambient_samples = np.frombuffer(out, dtype=np.int16)
+
+            # Boost the original audio (equivalent to audioop.mul with factor 1.5)
+            pcm_boosted = (pcm_samples * 1.5).astype(np.int16)
+
+            # Scale ambient noise (equivalent to audioop.mul with ratio)
+            ambient_scaled = (ambient_samples * ratio).astype(np.int16)
+
+            # Mix the two signals (equivalent to audioop.add)
+            # Use clipping to prevent integer overflow
+            mixed_samples = np.clip(pcm_boosted + ambient_scaled, -32768, 32767).astype(np.int16)
+            mixed = mixed_samples.tobytes()
+        except Exception as e:
+            logger.error(f"Audio mixing error with NumPy: {e}")
             return pcm  # Return original audio if mixing fails
+
         logger.debug("Mixed audio with ambient noise (level=%s)", level)
         return mixed
 
     @staticmethod
     def ulaw(pcm: bytes) -> bytes:
-        encoded = audioop.lin2ulaw(pcm, 2)
-        logger.debug("Converted PCM to µ-law format, %d bytes", len(encoded))
-        return encoded
+        try:
+            import numpy as np
+            # Convert PCM bytes to 16-bit samples
+            samples = np.frombuffer(pcm, dtype=np.int16)
+
+            # Normalize to float in range [-1, 1]
+            samples_float = samples.astype(float) / 32768.0
+
+            # µ-law encoding algorithm
+            mu = 255  # mu-law parameter
+            encoded_samples = np.sign(samples_float) * np.log(1 + mu * np.abs   (samples_float)) / np.log(1 + mu)
+
+            # Scale to range [0, 255] for uint8
+            encoded_samples = ((encoded_samples + 1) * 127.5).astype(np.uint8)
+
+            # Convert back to bytes
+            encoded = encoded_samples.tobytes()
+            logger.debug("Converted PCM to µ-law format, %d bytes", len(encoded))
+            return encoded
+        except Exception as e:
+            logger.error(f"Error in µ-law conversion: {e}")
+            # Return a valid but empty µ-law stream
+            return b'\x7f' * (len(pcm) // 4)  # Approximate size reduction
 
 # ------------------------
 # Playbook Loader

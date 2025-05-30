@@ -1,0 +1,73 @@
+meta:
+  name: "IT Support Test"
+  description: "Simple IT support test scenario for debugging"
+  author: "test@example.com"
+  version: 1.0
+  culture: "en-US"
+
+defaults:
+  persona: professional
+  silent_until: 5
+  ambient_ratio: 0.05
+  temperature: 0.7
+
+sequence:
+  - stage: RAPPORT
+    persona: professional
+    custom_prompt: |
+      Hi there! This is Alex from IT Support. I'm calling about a security update 
+      that needs to be installed on your workstation. Do you have a few minutes?
+
+  - stage: CREDIBILITY
+    persona: confident
+    custom_prompt: |
+      I'm calling from our internal IT department, employee ID 4472. We've detected 
+      some unusual network activity and need to verify your system security.
+
+  - stage: DISCOVERY
+    custom_prompt: |
+      Can you tell me what operating system you're currently running? 
+      Windows 10, Windows 11, or Mac?
+    max_cycles: 2
+
+  - stage: VALIDATION
+    custom_prompt: |
+      Perfect, thank you. And when did you last install system updates?
+
+  - stage: ALIGNMENT
+    persona: thoughtful
+    custom_prompt: |
+      Based on our security scan, your system needs a critical patch to prevent 
+      potential data breaches. This is standard procedure for all employees.
+
+  - stage: PROOF
+    custom_prompt: |
+      This same update was rolled out to the finance department yesterday. 
+      It's part of our quarterly security compliance requirements.
+
+  - stage: URGENCY
+    persona: urgent
+    custom_prompt: |
+      We need to complete this update today to maintain our security certification. 
+      The process only takes about 5 minutes.
+    max_cycles: 1
+
+  - stage: TRIAL_CLOSE
+    custom_prompt: |
+      Are you ready to proceed with the security update? I can walk you through it step by step.
+    success_regex: "\\b(yes|ready|okay|sure)\\b"
+
+  - stage: CLOSE
+    persona: confident
+    custom_prompt: |
+      Great! I'll need you to open your web browser and navigate to our secure 
+      update portal. Can you do that for me?
+
+  - stage: FOLLOW_UP
+    persona: professional
+    custom_prompt: |
+      Perfect! The update is now complete. Your system is secure and compliant. 
+      Thanks for your cooperation.
+
+  - stage: REPORTING
+    operator_note: "IT support scenario completed successfully."

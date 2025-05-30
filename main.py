@@ -460,8 +460,18 @@ class CallHandler:
                     logger.error("send_greeting called without stream_sid")
                     return
                     
-                # Initial greeting
+                # Get initial greeting from playbook or use default
                 greeting = "Hello! Thanks for taking my call today. How are you doing?"
+                
+                # Check if playbook has a custom prompt for RAPPORT stage
+                if self.playbook_seq:
+                    for stage_config in self.playbook_seq:
+                        if stage_config["stage"] == SalesStage.RAPPORT:
+                            custom_prompt = stage_config.get("custom_prompt")
+                            if custom_prompt:
+                                greeting = custom_prompt.strip()
+                            break
+                
                 logger.info(f"Sending initial greeting: {greeting}")
                 
                 pcm = await self.voice_svc.synth(greeting, voice_id, persona)
@@ -715,7 +725,7 @@ class CallHandler:
             
             # Generate NLP response
             try:
-                response, next_stage = await generate_sales_reply(call_sid, cleaned_transcript, current_stage)
+                response, next_stage = await generate_sales_reply(call_sid, cleaned_transcript, current_stage, self.playbook_seq)
                 logger.info(f"Generated sales reply: '{response}' | Next stage: {next_stage.name}")
             except Exception as e:
                 logger.error(f"Failed to generate sales reply: {e}")

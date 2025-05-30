@@ -89,8 +89,18 @@ def select_psychological_trigger(stage, analysis):
     return random.choice(relevant) if relevant else random.choice(triggers)
 
 
-async def generate_sales_reply(call_sid, text, current_stage, playbook_seq=None):
-    cur = DB_CONN.cursor()
+async def generate_sales_reply(call_sid, text, current_stage, playbook_seq=None, db_conn=None):
+    import logging
+    logger = logging.getLogger("SalesAutomation")
+    
+    if playbook_seq:
+        logger.info(f"NLP: Using playbook with {len(playbook_seq)} stages for stage {current_stage.name}")
+    else:
+        logger.info(f"NLP: No playbook provided, using default Axel behavior for stage {current_stage.name}")
+    
+    # Use provided db_conn or fall back to global DB_CONN
+    db_to_use = db_conn if db_conn else DB_CONN
+    cur = db_to_use.cursor()
 
     # Fetch the last 10 conversation turns for context
     rows = cur.execute(
@@ -119,14 +129,21 @@ async def generate_sales_reply(call_sid, text, current_stage, playbook_seq=None)
     stage_persona = "professional"
     
     if playbook_seq:
+        logger.info(f"NLP: Searching playbook for stage {updated_stage.name}")
         # Find the current stage in the playbook sequence
         for stage_config in playbook_seq:
+            logger.debug(f"NLP: Checking playbook stage {stage_config['stage'].name}")
             if stage_config["stage"] == updated_stage:
                 custom_prompt = stage_config.get("custom_prompt")
                 if custom_prompt:
                     playbook_override = custom_prompt
                     stage_persona = stage_config.get("persona", "professional")
+                    logger.info(f"NLP: Found playbook override for {updated_stage.name}: {custom_prompt[:100]}...")
+                else:
+                    logger.info(f"NLP: Found stage {updated_stage.name} in playbook but no custom_prompt")
                 break
+        if not playbook_override:
+            logger.warning(f"NLP: Stage {updated_stage.name} not found in playbook, using default behavior")
 
     # Use original Axel prompt as base, but add playbook integration if available
     if playbook_override:
@@ -212,7 +229,7 @@ async def generate_sales_reply(call_sid, text, current_stage, playbook_seq=None)
     response_content = resp.choices[0].message.content
 
     # Store assistant response
-    DB_CONN.execute("""
+    db_to_use.execute("""
         INSERT INTO messages(call_sid, role, content, timestamp, sales_stage,
                              sentiment_score, interest_level, objection_type, trigger_used)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -221,17 +238,17 @@ async def generate_sales_reply(call_sid, text, current_stage, playbook_seq=None)
         updated_stage.name, analysis["sentiment_score"], analysis["interest_level"],
         analysis["objection_type"], trigger
     ))
-    DB_CONN.commit()
+    db_to_use.commit()
 
     # Store objections explicitly if they exist
     if analysis["objection_type"]:
-        DB_CONN.execute("""
+        db_to_use.execute("""
             INSERT INTO objections(call_sid, objection_text, objection_type, response_used, resolved, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
             call_sid, text, analysis["objection_type"], response_content, False,
             datetime.datetime.utcnow().isoformat()
         ))
-        DB_CONN.commit()
+        db_to_use.commit()
 
     return response_content, updated_stage

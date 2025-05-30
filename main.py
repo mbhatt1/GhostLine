@@ -465,14 +465,23 @@ class CallHandler:
                 
                 # Check if playbook has a custom prompt for RAPPORT stage
                 if self.playbook_seq:
+                    logger.info(f"Greeting: Checking playbook with {len(self.playbook_seq)} stages for RAPPORT")
                     for stage_config in self.playbook_seq:
+                        logger.debug(f"Greeting: Checking stage {stage_config['stage'].name}")
                         if stage_config["stage"] == SalesStage.RAPPORT:
                             custom_prompt = stage_config.get("custom_prompt")
                             if custom_prompt:
                                 greeting = custom_prompt.strip()
+                                logger.info(f"Greeting: Using playbook RAPPORT prompt: {greeting[:100]}...")
+                            else:
+                                logger.info("Greeting: Found RAPPORT stage but no custom_prompt")
                             break
+                    else:
+                        logger.warning("Greeting: RAPPORT stage not found in playbook")
+                else:
+                    logger.info("Greeting: No playbook available, using default greeting")
                 
-                logger.info(f"Sending initial greeting: {greeting}")
+                logger.info(f"Sending initial greeting: {greeting[:100]}...")
                 
                 pcm = await self.voice_svc.synth(greeting, voice_id, persona)
                 logger.info(f"Got {len(pcm)} bytes of PCM from ElevenLabs")
@@ -725,7 +734,7 @@ class CallHandler:
             
             # Generate NLP response
             try:
-                response, next_stage = await generate_sales_reply(call_sid, cleaned_transcript, current_stage, self.playbook_seq)
+                response, next_stage = await generate_sales_reply(call_sid, cleaned_transcript, current_stage, self.playbook_seq, self.db)
                 logger.info(f"Generated sales reply: '{response}' | Next stage: {next_stage.name}")
             except Exception as e:
                 logger.error(f"Failed to generate sales reply: {e}")
@@ -913,6 +922,10 @@ class SalesAutomationApp:
 
         elif args.cmd == 'serve':
             playbook = Playbook(args.playbook) if args.playbook else None
+            if playbook:
+                logger.info("Loaded playbook with %d stages: %s", len(playbook.seq), [s['stage'].name for s in playbook.seq])
+            else:
+                logger.info("No playbook loaded - using default behavior")
             logger.info("Starting server with voice ID %s on port %d", args.voice_id, args.port)
             # Ngrok tunnel
             from pyngrok import ngrok

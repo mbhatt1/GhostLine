@@ -241,23 +241,16 @@ class TestBuildStageAgents:
             SalesStage.REPORTING,
         }
 
-    def test_default_handoff_to_next_stage(self, simple_playbook: Playbook) -> None:
+    def test_no_handoffs_wired(self, simple_playbook: Playbook) -> None:
+        """Handoffs are intentionally empty — PlaybookRunner handles transitions.
+
+        The Agents SDK handoff tool schemas are incompatible with some providers
+        (e.g. Groq rejects empty JSON schema properties), and stage transitions
+        are already managed by PlaybookRunner.evaluate().
+        """
         agents = build_stage_agents(simple_playbook)
-        # RAPPORT should hand off to CREDIBILITY
-        rapport_targets = agents[SalesStage.RAPPORT].handoffs
-        assert agents[SalesStage.CREDIBILITY] in rapport_targets
-
-    def test_goto_on_success_added_as_handoff(self, branching_playbook: Playbook) -> None:
-        agents = build_stage_agents(branching_playbook)
-        objection_targets = agents[SalesStage.OBJECTION].handoffs
-        # OBJECTION has goto_on_success: CLOSE
-        assert agents[SalesStage.CLOSE] in objection_targets
-
-    def test_goto_on_fail_added_as_handoff(self, branching_playbook: Playbook) -> None:
-        agents = build_stage_agents(branching_playbook)
-        urgency_targets = agents[SalesStage.URGENCY].handoffs
-        # URGENCY has goto_on_fail: OBJECTION
-        assert agents[SalesStage.OBJECTION] in urgency_targets
+        for stage, agent in agents.items():
+            assert agent.handoffs == [], f"{stage.name} should have no handoffs"
 
 
 class TestCallContext:

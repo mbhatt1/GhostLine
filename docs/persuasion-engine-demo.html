@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostLine — Persuasion Engine Flow</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 1rem 0.5rem;
+  }
+  h1 { font-size: 1.1rem; color: #666; letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 0.8rem; }
+
+  #canvas-wrap { position: relative; }
+  canvas { display: block; }
+
+  #info-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 240px;
+    background: rgba(12,12,20,0.92);
+    border: 1px solid #222;
+    border-radius: 6px;
+    padding: 14px;
+    font-size: 0.7rem;
+    line-height: 1.6;
+    color: #888;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #info-panel.visible { opacity: 1; }
+  #info-panel .title { color: #eee; font-size: 0.8rem; font-weight: bold; margin-bottom: 6px; }
+  #info-panel .accent { color: #00d4ff; }
+  #info-panel .warn { color: #f59e0b; }
+  #info-panel .fail { color: #f43f5e; }
+  #info-panel .ok { color: #22c55e; }
+  #info-panel .row { margin-top: 4px; }
+
+  #controls { margin-top: 0.8rem; display: flex; gap: 0.6rem; align-items: center; }
+  #controls button {
+    background: #1a1a2a; border: 1px solid #333; color: #aaa;
+    padding: 0.35rem 1rem; font-family: inherit; font-size: 0.7rem;
+    cursor: pointer; border-radius: 4px; text-transform: uppercase;
+    letter-spacing: 0.08em; transition: all 0.2s;
+  }
+  #controls button:hover { border-color: #00d4ff; color: #00d4ff; }
+  #controls button.on { border-color: #00d4ff; color: #00d4ff; background: #0d1a2a; }
+  #status { font-size: 0.7rem; color: #555; margin-left: 0.8rem; }
+  #status .hl { color: #00d4ff; }
+
+  #summary {
+    margin-top: 0.6rem; font-size: 0.65rem; color: #333;
+    opacity: 0; transition: opacity 0.5s; text-align: center;
+  }
+  #summary.visible { opacity: 1; color: #666; }
+  #summary .s { color: #00d4ff; }
+</style>
+</head>
+<body>
+
+<h1>GhostLine &mdash; Persuasion Engine</h1>
+
+<div id="canvas-wrap">
+  <canvas id="c" width="900" height="520"></canvas>
+  <div id="info-panel">
+    <div class="title" id="ip-title">—</div>
+    <div id="ip-body"></div>
+  </div>
+</div>
+
+<div id="controls">
+  <button id="btn-play">Play</button>
+  <button id="btn-step">Step</button>
+  <button id="btn-reset">Reset</button>
+  <span id="status">Click <span class="hl">Play</span> or <span class="hl">Step</span></span>
+</div>
+<div id="summary"></div>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const dpr = window.devicePixelRatio || 1;
+canvas.width = 900 * dpr;
+canvas.height = 520 * dpr;
+canvas.style.width = "900px";
+canvas.style.height = "520px";
+ctx.scale(dpr, dpr);
+
+const W = 900, H = 520;
+
+// Colors
+const C = {
+  trust: "#22c55e", gather: "#a855f7", pressure: "#f59e0b",
+  capture: "#f43f5e", exit: "#555", edge: "#1e1e2e",
+  edgeActive: "#00d4ff", bg: "#0a0a0f", node: "#111118",
+  text: "#ccc", dim: "#444", packet: "#00d4ff",
+  failEdge: "#f43f5e", skipEdge: "#a855f7", recoverEdge: "#22c55e"
+};
+
+// Node definitions
+const nodes = [
+  { id: "RAPPORT",     x: 100,  y: 60,  phase: "trust",    label: "RAPPORT",     persona: "excited" },
+  { id: "CREDIBILITY", x: 260,  y: 60,  phase: "trust",    label: "CREDIBILITY", persona: "confident" },
+  { id: "DISCOVERY",   x: 420,  y: 60,  phase: "gather",   label: "DISCOVERY",   persona: "thoughtful" },
+  { id: "VALIDATION",  x: 580,  y: 60,  phase: "gather",   label: "VALIDATION",  persona: "thoughtful" },
+  { id: "URGENCY",     x: 740,  y: 60,  phase: "pressure", label: "URGENCY",     persona: "urgent" },
+  { id: "OBJECTION",   x: 740,  y: 220, phase: "pressure", label: "OBJECTION",   persona: "concerned" },
+  { id: "CLOSE",       x: 500,  y: 220, phase: "capture",  label: "CLOSE",       persona: "confident" },
+  { id: "FOLLOW_UP",   x: 300,  y: 220, phase: "exit",     label: "FOLLOW_UP",   persona: "professional" },
+  { id: "REPORTING",   x: 100,  y: 220, phase: "exit",     label: "REPORTING",   persona: "silent" },
+];
+
+const NW = 120, NH = 50, NR = 8;
+
+// Edges
+const edges = [
+  { from: "RAPPORT", to: "CREDIBILITY", type: "linear" },
+  { from: "CREDIBILITY", to: "DISCOVERY", type: "linear" },
+  { from: "DISCOVERY", to: "URGENCY", type: "skip", label: "regex ✓" },
+  { from: "DISCOVERY", to: "VALIDATION", type: "linear", dimmed: true },
+  { from: "VALIDATION", to: "URGENCY", type: "linear", dimmed: true },
+  { from: "URGENCY", to: "OBJECTION", type: "fail", label: "goto_on_fail" },
+  { from: "OBJECTION", to: "CLOSE", type: "recover", label: "goto_on_success" },
+  { from: "CLOSE", to: "FOLLOW_UP", type: "linear" },
+  { from: "FOLLOW_UP", to: "REPORTING", type: "linear" },
+];
+
+// Step data
+const steps = [
+  { node: "RAPPORT", edges: ["RAPPORT→CREDIBILITY"],
+    sentiment: 0.72, trigger: "similarity",
+    title: "① RAPPORT", body: `<div class="row">Persona: <span class="accent">excited · 1.15x rate</span></div><div class="row">Warm greeting, name drop, contextual reference</div><div class="row">Target engages casually</div><div class="row">Sentiment: <span class="ok">0.72</span> · Trigger: similarity</div><div class="row">→ advance to CREDIBILITY</div>` },
+  { node: "CREDIBILITY", edges: ["CREDIBILITY→DISCOVERY"],
+    sentiment: 0.78, trigger: "authority",
+    title: "② CREDIBILITY", body: `<div class="row">Persona: <span class="accent">confident</span></div><div class="row">Drops ticket number, compliance framework</div><div class="row">Target asks clarifying question</div><div class="row">Sentiment: <span class="ok">0.78</span> · Trigger: authority</div><div class="row">→ advance to DISCOVERY</div>` },
+  { node: "DISCOVERY", edges: ["DISCOVERY→URGENCY"],
+    sentiment: 0.80, trigger: "presupposition",
+    title: "③ DISCOVERY", body: `<div class="row">Persona: <span class="accent">thoughtful · 0.92x</span></div><div class="row">Asks about auth method</div><div class="row">Target: <em>"I use a mobile authenticator"</em></div><div class="row">Sentiment: <span class="ok">0.80</span></div><div class="row"><span class="accent">success_regex ✓</span> "authenticator"</div><div class="row">→ <span class="accent">SKIP</span> validation, jump to URGENCY</div>` },
+  { node: "URGENCY", edges: ["URGENCY→OBJECTION"],
+    sentiment: 0.35, trigger: "scarcity — FAILED",
+    title: "④ URGENCY", body: `<div class="row">Persona: <span class="warn">urgent · 1.20x · pitch +8%</span></div><div class="row">Pushes compliance deadline</div><div class="row">Target wants to check with manager</div><div class="row">Sentiment: <span class="fail">▼ 0.35</span></div><div class="row">Scarcity trigger <span class="fail">FAILED</span></div><div class="row">→ <span class="fail">goto_on_fail</span> routes to OBJECTION</div>` },
+  { node: "OBJECTION", edges: ["OBJECTION→CLOSE"],
+    sentiment: 0.62, trigger: "acknowledge + redirect",
+    title: "⑤ OBJECTION", body: `<div class="row">Persona: <span class="accent">concerned · 0.90x</span></div><div class="row">Validates concern, offers alternative</div><div class="row">Target relents, agrees to proceed</div><div class="row">Sentiment: <span class="ok">▲ 0.62</span> recovered</div><div class="row">→ <span class="ok">goto_on_success</span> routes to CLOSE</div>` },
+  { node: "CLOSE", edges: ["CLOSE→FOLLOW_UP"],
+    sentiment: 0.70, trigger: "assumptive_silence",
+    title: "⑥ CLOSE", body: `<div class="row">Persona: <span class="accent">confident</span></div><div class="row">Direct ask + assumptive silence</div><div class="row">Target complies</div><div class="row">Sentiment: <span class="ok">0.70</span></div><div class="row"><span class="accent">success_regex ✓</span> captured</div><div class="row">→ advance to FOLLOW_UP</div>` },
+  { node: "FOLLOW_UP", edges: ["FOLLOW_UP→REPORTING"],
+    sentiment: 0.70, trigger: "cover_narrative",
+    title: "⑦ FOLLOW_UP", body: `<div class="row">Persona: <span class="accent">professional</span></div><div class="row">Confirms completion, cover story</div><div class="row">Target accepts, no suspicion</div><div class="row">→ advance to REPORTING</div>` },
+  { node: "REPORTING", edges: [],
+    sentiment: null, trigger: "evidence_logging",
+    title: "⑧ REPORTING", body: `<div class="row">Operator-side only</div><div class="row">Transcript: SHA-256 hashed</div><div class="row">Stages: <span class="accent">8</span> traversed</div><div class="row">Objections: <span class="accent">1</span> handled</div><div class="row">Branch: URGENCY→OBJECTION→CLOSE</div><div class="row"><span class="accent">OUTCOME: SUCCESS ✓</span></div>` },
+];
+
+function nodeById(id) { return nodes.find(n => n.id === id); }
+function edgeKey(e) { return e.from + "→" + e.to; }
+function phaseColor(p) { return C[p] || C.dim; }
+
+// Edge path computation
+function edgePath(e) {
+  const a = nodeById(e.from), b = nodeById(e.to);
+  if (!a || !b) return null;
+
+  // Special curved paths for non-linear edges
+  if (e.from === "DISCOVERY" && e.to === "URGENCY") {
+    // Skip arc over VALIDATION
+    return { type: "arc", x1: a.x + NW/2 + 10, y1: a.y + NH, cx: 580, cy: 150, x2: b.x, y2: b.y + NH/2 };
+  }
+  if (e.from === "URGENCY" && e.to === "OBJECTION") {
+    // Down
+    return { type: "line", x1: a.x + NW/2, y1: a.y + NH, x2: b.x + NW/2, y2: b.y };
+  }
+  if (e.from === "OBJECTION" && e.to === "CLOSE") {
+    // Left
+    return { type: "line", x1: b.x + NW, y1: b.y + NH/2, x2: a.x, y2: a.y + NH/2 };
+  }
+  // Default: horizontal
+  return { type: "line", x1: a.x + NW, y1: a.y + NH/2, x2: b.x, y2: b.y + NH/2 };
+}
+
+// Drawing
+let activeNode = null;
+let activeEdges = new Set();
+let doneNodes = new Set();
+let packetAnim = null; // { path, progress, color }
+
+function drawRoundRect(x, y, w, h, r, fill, stroke, lw) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 1.5; ctx.stroke(); }
+}
+
+function drawArrowHead(x, y, angle, size, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-size, -size * 0.5);
+  ctx.lineTo(-size, size * 0.5);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawEdge(e) {
+  const key = edgeKey(e);
+  const isActive = activeEdges.has(key);
+  const path = edgePath(e);
+  if (!path) return;
+
+  let color = C.edge;
+  let lw = 1.5;
+  if (isActive) {
+    if (e.type === "fail") { color = C.failEdge; lw = 2.5; }
+    else if (e.type === "skip") { color = C.skipEdge; lw = 2.5; }
+    else if (e.type === "recover") { color = C.recoverEdge; lw = 2.5; }
+    else { color = C.edgeActive; lw = 2.5; }
+  } else if (e.dimmed) {
+    color = "#141420";
+  }
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lw;
+  ctx.setLineDash(e.dimmed && !isActive ? [4, 4] : []);
+
+  if (path.type === "arc") {
+    ctx.beginPath();
+    ctx.moveTo(path.x1, path.y1);
+    ctx.quadraticCurveTo(path.cx, path.cy, path.x2, path.y2);
+    ctx.stroke();
+    // Arrow
+    const t = 0.95;
+    const tx = (1-t)*(1-t)*path.x1 + 2*(1-t)*t*path.cx + t*t*path.x2;
+    const ty = (1-t)*(1-t)*path.y1 + 2*(1-t)*t*path.cy + t*t*path.y2;
+    const tx2 = (1-0.99)*(1-0.99)*path.x1 + 2*(1-0.99)*0.99*path.cx + 0.99*0.99*path.x2;
+    const ty2 = (1-0.99)*(1-0.99)*path.y1 + 2*(1-0.99)*0.99*path.cy + 0.99*0.99*path.y2;
+    drawArrowHead(path.x2, path.y2, Math.atan2(ty2-ty, tx2-tx), 8, color);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(path.x1, path.y1);
+    ctx.lineTo(path.x2, path.y2);
+    ctx.stroke();
+    const angle = Math.atan2(path.y2 - path.y1, path.x2 - path.x1);
+    drawArrowHead(path.x2, path.y2, angle, 8, color);
+  }
+  ctx.setLineDash([]);
+
+  // Label
+  if (e.label && isActive) {
+    const mx = (path.x1 + (path.cx || path.x2)) / 2;
+    const my = (path.y1 + (path.cy || path.y2)) / 2 - 8;
+    ctx.font = "9px monospace";
+    ctx.fillStyle = color;
+    ctx.textAlign = "center";
+    ctx.fillText(e.label, mx, my);
+  }
+}
+
+function drawNode(n) {
+  const isActive = activeNode === n.id;
+  const isDone = doneNodes.has(n.id);
+  const pc = phaseColor(n.phase);
+  const alpha = isActive ? 1.0 : isDone ? 0.5 : 0.2;
+
+  // Glow
+  if (isActive) {
+    ctx.shadowColor = pc;
+    ctx.shadowBlur = 18;
+  }
+
+  const fill = isActive ? "#141425" : C.node;
+  const stroke = isActive ? pc : isDone ? pc : "#1a1a2a";
+  const lw = isActive ? 2.5 : 1.5;
+
+  ctx.globalAlpha = alpha;
+  drawRoundRect(n.x, n.y, NW, NH, NR, fill, stroke, lw);
+  ctx.shadowBlur = 0;
+
+  // Text
+  ctx.font = "bold 10px monospace";
+  ctx.fillStyle = isActive ? pc : isDone ? "#999" : "#444";
+  ctx.textAlign = "center";
+  ctx.fillText(n.label, n.x + NW/2, n.y + NH/2 - 4);
+
+  ctx.font = "8px monospace";
+  ctx.fillStyle = isActive ? "#888" : "#333";
+  ctx.fillText(n.persona, n.x + NW/2, n.y + NH/2 + 10);
+
+  ctx.globalAlpha = 1;
+}
+
+function drawPacket() {
+  if (!packetAnim) return;
+  const p = packetAnim;
+  const path = p.path;
+  let px, py;
+
+  if (path.type === "arc") {
+    const t = p.progress;
+    px = (1-t)*(1-t)*path.x1 + 2*(1-t)*t*path.cx + t*t*path.x2;
+    py = (1-t)*(1-t)*path.y1 + 2*(1-t)*t*path.cy + t*t*path.y2;
+  } else {
+    px = path.x1 + (path.x2 - path.x1) * p.progress;
+    py = path.y1 + (path.y2 - path.y1) * p.progress;
+  }
+
+  ctx.beginPath();
+  ctx.arc(px, py, 5, 0, Math.PI * 2);
+  ctx.fillStyle = p.color;
+  ctx.shadowColor = p.color;
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawPhaseLabels() {
+  ctx.font = "8px monospace";
+  ctx.textAlign = "left";
+
+  const labels = [
+    { text: "TRUST BUILDING", x: 80, y: 18, color: C.trust },
+    { text: "INFO GATHERING", x: 400, y: 18, color: C.gather },
+    { text: "PRESSURE", x: 720, y: 18, color: C.pressure },
+    { text: "CAPTURE", x: 480, y: 195, color: C.capture },
+    { text: "EXIT", x: 80, y: 195, color: C.exit },
+  ];
+  labels.forEach(l => {
+    ctx.fillStyle = l.color;
+    ctx.globalAlpha = 0.4;
+    ctx.fillText(l.text, l.x, l.y);
+    ctx.globalAlpha = 1;
+  });
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawPhaseLabels();
+  edges.forEach(drawEdge);
+  nodes.forEach(drawNode);
+  drawPacket();
+}
+
+// Animation
+const infoPanel = document.getElementById("info-panel");
+const ipTitle = document.getElementById("ip-title");
+const ipBody = document.getElementById("ip-body");
+const statusEl = document.getElementById("status");
+const summaryEl = document.getElementById("summary");
+
+let currentStep = -1;
+let running = false;
+
+function resetAll() {
+  currentStep = -1;
+  activeNode = null;
+  activeEdges.clear();
+  doneNodes.clear();
+  packetAnim = null;
+  infoPanel.classList.remove("visible");
+  summaryEl.classList.remove("visible");
+  summaryEl.innerHTML = "";
+  statusEl.innerHTML = "Click <span class='hl'>Play</span> or <span class='hl'>Step</span>";
+  draw();
+}
+
+function animatePacket(edgeObj) {
+  return new Promise(resolve => {
+    const path = edgePath(edgeObj);
+    if (!path) { resolve(); return; }
+    const color = edgeObj.type === "fail" ? C.failEdge :
+                  edgeObj.type === "skip" ? C.skipEdge :
+                  edgeObj.type === "recover" ? C.recoverEdge : C.packet;
+    packetAnim = { path, progress: 0, color };
+    const dur = 600;
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min((now - start) / dur, 1);
+      packetAnim.progress = t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+      draw();
+      if (t < 1) requestAnimationFrame(tick);
+      else { packetAnim = null; draw(); resolve(); }
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+async function showStep(idx) {
+  const step = steps[idx];
+  // Mark previous as done
+  for (let i = 0; i < idx; i++) doneNodes.add(steps[i].node);
+  activeNode = step.node;
+  activeEdges.clear();
+  step.edges.forEach(k => activeEdges.add(k));
+
+  // Info panel
+  ipTitle.textContent = step.title;
+  ipBody.innerHTML = step.body;
+  infoPanel.classList.add("visible");
+  infoPanel.style.borderColor = phaseColor(nodeById(step.node).phase);
+
+  draw();
+
+  // Animate packet along active edge
+  if (step.edges.length > 0) {
+    const ek = step.edges[0];
+    const edgeObj = edges.find(e => edgeKey(e) === ek);
+    if (edgeObj) await animatePacket(edgeObj);
+  }
+
+  await new Promise(r => setTimeout(r, 300));
+
+  if (idx === steps.length - 1) {
+    summaryEl.innerHTML = `<span class="s">8</span> stages · <span class="s">1</span> objection · <span class="s">1</span> branch · URGENCY→OBJECTION→CLOSE · <span class="s">OUTCOME: SUCCESS ✓</span>`;
+    summaryEl.classList.add("visible");
+  }
+}
+
+async function play() {
+  if (running) return;
+  running = true;
+  document.getElementById("btn-play").classList.add("on");
+  resetAll();
+  for (let i = 0; i < steps.length; i++) {
+    currentStep = i;
+    await showStep(i);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  running = false;
+  document.getElementById("btn-play").classList.remove("on");
+}
+
+function step() {
+  if (running) return;
+  currentStep++;
+  if (currentStep >= steps.length) { resetAll(); return; }
+  showStep(currentStep);
+}
+
+document.getElementById("btn-play").addEventListener("click", play);
+document.getElementById("btn-step").addEventListener("click", step);
+document.getElementById("btn-reset").addEventListener("click", resetAll);
+
+draw();
+</script>
+</body>
+</html>

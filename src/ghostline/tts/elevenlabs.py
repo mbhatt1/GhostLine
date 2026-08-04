@@ -33,9 +33,12 @@ _TARGET_CHANNELS: Final[int] = 1
 # Sanity threshold: a successful synth should produce >= this many PCM bytes.
 _MIN_VALID_PCM_BYTES: Final[int] = 1000
 # Default TTS voice settings; playbooks may override per-stage later.
-_DEFAULT_STABILITY: Final[float] = 0.9
-_DEFAULT_SIMILARITY: Final[float] = 0.99
-_DEFAULT_STYLE: Final[float] = 0.9
+# Lower stability = more expressive/natural variation in pitch and cadence.
+# Lower similarity = less constrained to the voice sample, more human.
+# Higher style = more emotionally expressive.
+_DEFAULT_STABILITY: Final[float] = 0.4
+_DEFAULT_SIMILARITY: Final[float] = 0.7
+_DEFAULT_STYLE: Final[float] = 0.5
 # Fallback silence duration (ms) when synthesis fails.
 _FALLBACK_SILENCE_MS: Final[int] = 500
 

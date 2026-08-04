@@ -52,13 +52,19 @@ class SalesAutomationApp:
 
     @property
     def voice_service(self) -> VoiceService:
-        """Lazily construct the ElevenLabs voice service."""
+        """Lazily construct the TTS service (Piper if configured, else ElevenLabs)."""
         if self._voice_service is None:
-            self._voice_service = VoiceService(
-                api_key=self.settings.elevenlabs_api_key.get_secret_value(),
-                model_id=self.settings.elevenlabs_model,
-            )
-        return self._voice_service
+            if self.settings.piper_model_path:
+                from ghostline.tts.piper import PiperVoiceService
+
+                self._voice_service = PiperVoiceService(self.settings.piper_model_path)  # type: ignore[assignment]
+                _LOGGER.info("Using Piper TTS: %s", self.settings.piper_model_path)
+            else:
+                self._voice_service = VoiceService(
+                    api_key=self.settings.elevenlabs_api_key.get_secret_value(),
+                    model_id=self.settings.elevenlabs_model,
+                )
+        return self._voice_service  # type: ignore[return-value]
 
     @property
     def ambient(self) -> AmbientNoise:
@@ -74,6 +80,9 @@ class SalesAutomationApp:
         don't rely on LiteLLM reading a potentially-stale env var.
         """
         model = self.settings.litellm_model.lower()
+        if model.startswith("openrouter/"):
+            key = self.settings.openrouter_api_key
+            return key.get_secret_value() if key else None
         if model.startswith("openai/"):
             key = self.settings.openai_api_key
             return key.get_secret_value() if key else None
@@ -82,6 +91,9 @@ class SalesAutomationApp:
             return key.get_secret_value() if key else None
         if model.startswith("gemini/"):
             key = self.settings.gemini_api_key
+            return key.get_secret_value() if key else None
+        if model.startswith("groq/"):
+            key = self.settings.groq_api_key
             return key.get_secret_value() if key else None
         # Ollama and other local providers don't need a key
         return None
@@ -102,6 +114,11 @@ class SalesAutomationApp:
 
         # Build server deps — repository is opened synchronously via a one-shot.
         repo = self._run_async(self.repository())
+
+        # Disable OpenAI Agents SDK tracing — it tries to phone home to
+        # OpenAI with whatever OPENAI_API_KEY is set, which fails when using
+        # OpenRouter/other providers and spams the log with 401 errors.
+        os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
         # Build the reply generator (analysis + stage agents via LiteLLM).
         # Pass the provider API key explicitly so LiteLLM doesn't fall back

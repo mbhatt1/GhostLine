@@ -52,7 +52,9 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 # Minimum word count for an utterance to be considered "complete" enough to process.
-_MIN_COMPLETE_WORDS: int = 3
+# 1 = process single-word responses ("Yes", "Okay") immediately on speech_final
+# instead of waiting 1000ms for utterance_end.
+_MIN_COMPLETE_WORDS: int = 1
 
 __all__ = ("CallSession", "ServerDeps", "create_app")
 
@@ -77,6 +79,7 @@ class ServerDeps:
     ngrok_ws_url: str | None = None
     reply_generator: ReplyGenerator | None = None
     capabilities: ModelCapabilities | None = None
+    target_name: str | None = None
 
 
 class CallSession:
@@ -89,12 +92,15 @@ class CallSession:
         voice_id: str,
         campaign: str,
         persona: str,
+        *,
+        target_name: str | None = None,
     ) -> None:
         self._deps = deps
         self._ws = ws
         self.voice_id = voice_id
         self.campaign = campaign
         self.persona = persona
+        self.target_name = target_name
         self.call_sid: str | None = None
         self.stream_sid: str | None = None
         self.caller_number: str | None = None
@@ -104,6 +110,8 @@ class CallSession:
         self.deepgram: DeepgramClient | None = None
         self.runner: PlaybookRunner | None = None
         self._call_context = None
+        self._speaking = False  # True while the agent is sending TTS audio
+        self._utterance_lock = asyncio.Lock()  # serializes utterance processing
         if deps.playbook is not None:
             self.runner = PlaybookRunner(deps.playbook)
             self.current_stage = self.runner.current_stage
@@ -227,7 +235,12 @@ class CallSession:
             return
 
     async def _pump_out(self) -> None:
-        """Read Deepgram events → generate agent reply → synth → send to Twilio."""
+        """Read Deepgram events → generate agent reply → synth → send to Twilio.
+
+        Utterances are NOT dropped while the agent is speaking — instead
+        they wait for the utterance lock in _process_utterance so they
+        queue up and get processed after the current reply finishes.
+        """
         if self.deepgram is None:
             return
         buffer = ""
@@ -238,7 +251,6 @@ class CallSession:
                     await self._process_utterance(buffer.strip())
                     buffer = ""
                 waiting_for_utterance_end = False
-            # TranscriptEvent
             elif event.transcript:
                 if buffer and not buffer.endswith(" "):
                     buffer += " "
@@ -261,21 +273,43 @@ class CallSession:
                     waiting_for_utterance_end = True
 
     async def _silence_monitor(self) -> None:
-        """Send stage check-in lines when the target goes quiet."""
+        """Send stage check-in lines when the target goes quiet.
+
+        Acquires the utterance lock so check-in audio can't overlap
+        with reply audio. Skips if the agent is already speaking.
+        """
         while True:
             await asyncio.sleep(1)
             if self.stream_sid is None:
                 continue
+            if self._speaking:
+                continue
             silent = asyncio.get_event_loop().time() - self.last_activity
             threshold = self._stage_silence_threshold()
             if silent >= threshold and not self.check_in_sent:
-                await self._speak(STAGE_CHECKINS[self.current_stage])
+                _LOGGER.info(
+                    "Silence monitor: %.1fs >= %ds threshold, sending check-in for stage %s",
+                    silent,
+                    threshold,
+                    self.current_stage.name,
+                )
+                async with self._utterance_lock:
+                    self._speaking = True
+                    try:
+                        await self._speak(STAGE_CHECKINS[self.current_stage])
+                    finally:
+                        self._speaking = False
+                        self.last_activity = asyncio.get_event_loop().time()
                 self.check_in_sent = True
-                self.last_activity = asyncio.get_event_loop().time()
 
     async def _send_greeting(self) -> None:
-        """Speak the first stage's custom_prompt (or a default) once stream is live."""
-        # Wait briefly for stream_sid to be set.
+        """Speak the first stage's custom_prompt (or a default) once stream is live.
+
+        Acquires the utterance lock so the greeting can't overlap with
+        a reply (if the target speaks during the greeting, the reply
+        waits until the greeting finishes playing). Also stores the
+        greeting in the DB so the conversation history includes it.
+        """
         for _ in range(20):
             if self.stream_sid is not None:
                 break
@@ -284,15 +318,37 @@ class CallSession:
             _LOGGER.warning("No stream_sid; skipping greeting for %s", self.call_sid)
             return
         greeting = self._stage_greeting()
-        await self._speak(greeting)
+        if self.call_sid is not None:
+            await self._deps.repository.insert_message(
+                MessageRecord(
+                    call_sid=self.call_sid,
+                    role="assistant",
+                    content=greeting,
+                    sales_stage=self.current_stage.name,
+                )
+            )
+        async with self._utterance_lock:
+            self._speaking = True
+            try:
+                await self._speak(greeting)
+            finally:
+                self._speaking = False
+                self.last_activity = asyncio.get_event_loop().time()
 
     def _stage_greeting(self) -> str:
-        """Return the greeting text for the current (first) stage."""
+        """Return the greeting text for the current (first) stage.
+
+        Substitutes ``{name}`` with the target's name if provided via
+        the ``--target-name`` CLI arg (simulates OSINT-informed pretext).
+        """
+        text = "Hello! Thanks for taking my call today. How are you doing?"
         if self._deps.playbook is not None:
             config = self._deps.playbook.stage_for(self.current_stage)
             if config is not None and config.custom_prompt:
-                return config.custom_prompt.strip()
-        return "Hello! Thanks for taking my call today. How are you doing?"
+                text = config.custom_prompt.strip()
+        if self.target_name:
+            text = text.replace("{name}", self.target_name)
+        return text
 
     def _stage_silence_threshold(self) -> int:
         """Return the silence threshold for the current stage."""
@@ -303,62 +359,74 @@ class CallSession:
     async def _process_utterance(self, utterance: str) -> None:
         """Handle a complete user utterance: log, evaluate, reply, speak.
 
-        Pipeline:
-        1. Insert the user message into the DB
-        2. Evaluate stage transitions via the playbook runner
-        3. Generate a reply via the ReplyGenerator (analysis + stage agent)
-        4. Insert the assistant reply into the DB
-        5. Synthesize TTS and stream to Twilio
+        Uses an asyncio.Lock to serialize utterance processing — if the
+        agent is already generating a reply + speaking, the next utterance
+        waits until the lock is released. This prevents the agent from
+        being interrupted mid-speech and prevents overlapping TTS.
         """
         if self.call_sid is None:
             return
-        _LOGGER.info("Processing utterance for %s: %r", self.call_sid, utterance[:120])
+        async with self._utterance_lock:
+            self._speaking = True
+            try:
+                _LOGGER.info("Processing utterance for %s: '%s'", self.call_sid, utterance)
 
-        # 1. Log the user message
-        await self._deps.repository.insert_message(
-            MessageRecord(
-                call_sid=self.call_sid,
-                role="user",
-                content=utterance,
-                sales_stage=self.current_stage.name,
-            )
-        )
+                await self._deps.repository.insert_message(
+                    MessageRecord(
+                        call_sid=self.call_sid,
+                        role="user",
+                        content=utterance,
+                        sales_stage=self.current_stage.name,
+                    )
+                )
 
-        # 2. Evaluate stage transitions (may update self.current_stage)
-        if self.runner is not None:
-            outcome = self.runner.evaluate(utterance)
-            self.current_stage = outcome.next_stage
-            if outcome.exit_ is not None:
-                await self._handle_exit(outcome.exit_)
-                return
+                if self.runner is not None:
+                    outcome = self.runner.evaluate(utterance)
+                    self.current_stage = outcome.next_stage
+                    if outcome.exit_ is not None:
+                        await self._handle_exit(outcome.exit_)
+                        return
 
-        # 3. Generate a reply via the agent layer
-        history = await self._build_history_prompt()
-        reply = await self._generate_reply(utterance, history)
+                history = await self._build_history_prompt()
+                reply = await self._generate_reply(utterance, history)
 
-        # 4. Log the assistant reply
-        await self._deps.repository.insert_message(
-            MessageRecord(
-                call_sid=self.call_sid,
-                role="assistant",
-                content=reply,
-                sales_stage=self.current_stage.name,
-            )
-        )
+                await self._deps.repository.insert_message(
+                    MessageRecord(
+                        call_sid=self.call_sid,
+                        role="assistant",
+                        content=reply,
+                        sales_stage=self.current_stage.name,
+                    )
+                )
 
-        # 5. Speak the reply
-        await self._speak(reply)
+                await self._speak(reply)
+                # Brief cooldown after speaking — Twilio buffers audio so
+                # the target is still hearing the reply for a moment after
+                # we finish sending frames. Without this, queued utterances
+                # (transcribed during playback) fire instantly and overlap.
+                await asyncio.sleep(0.8)
+            finally:
+                self._speaking = False
+                self.last_activity = asyncio.get_event_loop().time()
 
     async def _build_history_prompt(self) -> str:
-        """Build a conversation history string from recent DB messages."""
+        """Build a conversation history string from recent DB messages.
+
+        Limited to the last 4 messages to keep the LLM prompt small
+        (faster response through OpenRouter).
+        """
         if self.call_sid is None:
             return ""
-        messages = await self._deps.repository.recent_messages(self.call_sid, limit=8)
+        messages = await self._deps.repository.recent_messages(self.call_sid, limit=4)
         if not messages:
             return ""
         lines = []
+        if self.target_name:
+            lines.append(
+                f"Target's name is {self.target_name}. Do NOT overuse it — once per reply at most, and skip it entirely most of the time."
+            )
         for msg in messages:
-            speaker = "Target" if msg.role == "user" else "Axel"
+            speaker = "Target" if msg.role == "user" else "Agent"
             lines.append(f"{speaker}: {msg.content}")
         return "\n".join(lines)
 
@@ -376,9 +444,9 @@ class CallSession:
                 history=history or None,
             )
             _LOGGER.info(
-                "Reply generated for %s: %r (trigger=%s, sentiment=%s)",
+                "Reply generated for %s: '%s' (trigger=%s, sentiment=%s)",
                 self.call_sid,
-                result.reply[:80],
+                result.reply,
                 result.trigger,
                 result.analysis.sentiment_score if result.analysis else None,
             )
@@ -402,10 +470,15 @@ class CallSession:
         if self.stream_sid is None:
             return
         pcm = await self._deps.voice_service.synth(text, self.voice_id, self.persona)
+        if not pcm or all(b == 0 for b in pcm[:100]):
+            _LOGGER.warning("TTS returned silence/fallback for: %r", text[:60])
         ratio = self._stage_ambient_ratio()
         mixed = self._deps.ambient.mix(pcm, level=ratio)
         ulaw = self._deps.ambient.ulaw(mixed)
-        await send_audio_chunk(self._ws, self.stream_sid, ulaw)
+        n_frames = await send_audio_chunk(self._ws, self.stream_sid, ulaw)
+        _LOGGER.info(
+            "TTS sent: %d bytes PCM, %d frames ulaw for: %r", len(pcm), n_frames, text[:60]
+        )
 
     def _stage_ambient_ratio(self) -> float:
         """Ambient mix weight for the current stage."""
@@ -471,6 +544,11 @@ def create_app(deps: ServerDeps) -> FastAPI:
         ws_url = deps.ngrok_ws_url
         campaign = request.query_params.get("campaign")
         persona = request.query_params.get("persona")
+        target_name = request.query_params.get("target_name")
+        # Store target_name on deps so the WS handler can read it
+        # (Twilio's <Stream> does NOT forward query params to the WSS connection).
+        if target_name:
+            deps.target_name = target_name
         params: list[str] = []
         if campaign:
             params.append(f"campaign={campaign}")
@@ -485,7 +563,9 @@ def create_app(deps: ServerDeps) -> FastAPI:
         """Per-call WebSocket: pump Twilio media frames through the full pipeline."""
         campaign = ws.query_params.get("campaign", "general")
         persona = ws.query_params.get("persona", "professional")
-        session = CallSession(deps, ws, deps.voice_id, campaign, persona)
+        session = CallSession(
+            deps, ws, deps.voice_id, campaign, persona, target_name=deps.target_name
+        )
         await session.run()
 
     return app

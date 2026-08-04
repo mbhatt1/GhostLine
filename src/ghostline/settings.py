@@ -51,9 +51,14 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     anthropic_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
+    openrouter_api_key: SecretStr | None = None
+    groq_api_key: SecretStr | None = None
 
     # ── Tunnel ──────────────────────────────────────────────────────
     ngrok_authtoken: SecretStr
+
+    # ── Piper TTS (local, offline — overrides ElevenLabs when set) ──
+    piper_model_path: str | None = None
 
     # ── Optional runtime knobs ──────────────────────────────────────
     # Field names map 1:1 to env vars (no prefix): LOG_LEVEL, HOST, PORT, etc.

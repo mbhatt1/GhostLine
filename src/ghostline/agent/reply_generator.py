@@ -1,15 +1,15 @@
 """Reply generator: orchestrates analysis + stage agent to produce a reply.
 
 This is the bridge between the call handler (which receives utterances)
-and the agent layer (which produces replies). It runs two Agents SDK
-calls per utterance:
+and the agent layer (which produces replies).
 
-1. Analysis agent → structured :class:`AnalysisResult`
-2. Stage agent for the current stage → reply text
+By default it runs a **single LLM call** per utterance (the stage agent)
+for low latency. The analysis agent (sentiment/objection detection) is
+optional and can be enabled via ``skip_analysis=False`` — but it adds
+a second LLM round-trip which roughly doubles response time.
 
-Both calls go through the LiteLLM model adapter so the LLM provider is
-swappable. Failures degrade gracefully: on LLM error, a fallback reply
-is returned so the call doesn't dead-air.
+Failures degrade gracefully: on LLM error, a fallback reply is returned
+so the call doesn't dead-air.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from ghostline.agent.axel import AxelAgent, build_axel
 from ghostline.agent.stage_handoffs import CallContext, update_context_with_analysis
 from ghostline.agent.triggers import select_trigger
 from ghostline.playbook import Playbook
-from ghostline.taxonomy import SalesStage
+from ghostline.taxonomy import PSYCH_TRIGGERS, SalesStage
 
 if TYPE_CHECKING:
     from agents.extensions.models.litellm_model import LitellmModel
@@ -34,8 +34,18 @@ __all__ = ("ReplyGenerator", "ReplyResult")
 
 _LOGGER = logging.getLogger(__name__)
 
-# Fallback reply when the LLM fails. Kept short for TTS.
 _FALLBACK_REPLY = "I understand. Could you tell me more about that?"
+
+# Default AnalysisResult used when the analysis agent is skipped.
+# Neutral sentiment, moderate interest, no objection — conservative.
+_SKIP_ANALYSIS_DEFAULT = AnalysisResult(
+    sentiment_score=0.0,
+    interest_level=0.5,
+    objection_type=None,
+    key_concerns=[],
+    buying_signals=[],
+    suggested_approach="Continue with current approach",
+)
 
 
 class ReplyResult:
@@ -66,18 +76,26 @@ class ReplyResult:
 class ReplyGenerator:
     """Wraps the Axel + analysis agents for use by the call handler.
 
-    Constructed once at server startup from the playbook + LiteLLM model.
-    Each call creates a fresh :class:`CallContext` via :meth:`new_context`.
+    Args:
+        playbook: The loaded playbook (for stage agents + persona).
+        model: LiteLLM model instance/string.
+        skip_analysis: If True (default), skip the analysis LLM call and
+            use a default AnalysisResult. This halves response latency at
+            the cost of less precise trigger selection. Set False for
+            richer sentiment-aware trigger selection.
     """
 
     def __init__(
         self,
         playbook: Playbook | None,
         model: LitellmModel | str | None = None,
+        *,
+        skip_analysis: bool = True,
     ) -> None:
         self._playbook = playbook
         self._model = model
-        self._analysis_agent = build_analysis_agent(model=model)
+        self._skip_analysis = skip_analysis
+        self._analysis_agent = build_analysis_agent(model=model) if not skip_analysis else None
         self._axel: AxelAgent | None = None
         if playbook is not None:
             self._axel = build_axel(playbook, model=model)
@@ -106,10 +124,13 @@ class ReplyGenerator:
         Returns:
             A :class:`ReplyResult` with the reply text and metadata.
         """
-        analysis = await self._run_analysis(utterance)
-        trigger = self._select_trigger(current_stage, analysis)
+        if self._skip_analysis:
+            analysis: AnalysisResult | None = _SKIP_ANALYSIS_DEFAULT
+            trigger: str | None = self._pick_random_trigger(current_stage)
+        else:
+            analysis = await self._run_analysis(utterance)
+            trigger = self._select_trigger(current_stage, analysis)
 
-        # Update the call context with the latest analysis (for dynamic instructions)
         if context is not None and analysis is not None:
             update_context_with_analysis(context, current_stage, analysis)
 
@@ -122,8 +143,20 @@ class ReplyGenerator:
             stage=current_stage,
         )
 
+    @staticmethod
+    def _pick_random_trigger(stage: SalesStage) -> str:
+        """Pick a trigger from the stage's list without an LLM analysis call."""
+        import secrets
+
+        triggers = PSYCH_TRIGGERS.get(stage, [])
+        if not triggers:
+            return "acknowledge"
+        return triggers[secrets.randbelow(len(triggers))]
+
     async def _run_analysis(self, utterance: str) -> AnalysisResult | None:
         """Run the analysis agent to get structured AnalysisResult."""
+        if self._analysis_agent is None:
+            return None
         try:
             result = await Runner.run(self._analysis_agent, utterance)
             return result.final_output_as(AnalysisResult)
@@ -149,13 +182,10 @@ class ReplyGenerator:
         if self._axel is None:
             return _FALLBACK_REPLY
 
-        # Pick the agent for the current stage
         stage_agent = self._axel.stages.get(stage)
         if stage_agent is None:
-            # Fall back to the root agent
             stage_agent = self._axel.root
 
-        # Build the input: conversation history + current utterance
         input_text = utterance
         if history:
             input_text = f'Conversation so far:\n{history}\n\nThe person just said: "{utterance}"'

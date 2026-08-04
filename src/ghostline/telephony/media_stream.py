@@ -16,6 +16,7 @@ Outbound:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -29,12 +30,19 @@ __all__ = (
     "TwilioEvent",
     "encode_media_frame",
     "parse_event",
+    "send_audio_chunk",
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 # Standard Twilio Media Streams chunk size: 8 kHz µ-law * 20ms = 160 bytes.
 CHUNK_SIZE: Final[int] = 160
+
+# Real-time pacing: 160 bytes at 8 kHz = 20ms per frame.
+# Sending all frames in a burst causes Twilio's playback buffer to
+# desync from the agent's "speaking" state, leading to the silence
+# monitor firing mid-playback and interrupting the agent's audio.
+_FRAME_DURATION_SEC: Final[float] = 0.02
 
 
 @dataclass(slots=True, frozen=True)
@@ -129,10 +137,15 @@ def encode_media_frame(stream_sid: str, ulaw_chunk: bytes) -> str:
 async def send_audio_chunk(
     ws: MediaSink, stream_sid: str, ulaw: bytes, *, chunk_size: int = CHUNK_SIZE
 ) -> int:
-    """Send ``ulaw`` audio to Twilio in CHUNK_SIZE-byte frames.
+    """Send ``ulaw`` audio to Twilio in CHUNK_SIZE-byte frames at real-time pace.
 
-    Returns the number of frames sent. Stops early if the underlying
-    ``send_text`` raises (caller should treat that as a closed socket).
+    Each 160-byte frame is 20ms of audio at 8 kHz. We sleep 20ms between
+    frames so the agent is "speaking" for the full duration of the audio.
+    This prevents the silence monitor from firing while Twilio is still
+    playing buffered audio, which was the root cause of the agent's
+    voice cutting out mid-sentence.
+
+    Returns the number of frames sent.
     """
     frames_sent = 0
     for offset in range(0, len(ulaw), chunk_size):
@@ -140,4 +153,5 @@ async def send_audio_chunk(
         frame = encode_media_frame(stream_sid, chunk)
         await ws.send_text(frame)
         frames_sent += 1
+        await asyncio.sleep(_FRAME_DURATION_SEC)
     return frames_sent

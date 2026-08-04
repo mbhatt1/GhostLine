@@ -104,7 +104,7 @@ STAGE_TIMINGS: Final[dict[SalesStage, int]] = {
     SalesStage.ALIGNMENT: 10,
     SalesStage.PROOF: 8,
     SalesStage.URGENCY: 11,
-    SalesStage.TRIAL_CLOSE: 2,
+    SalesStage.TRIAL_CLOSE: 7,
     SalesStage.OBJECTION: 4,
     SalesStage.CLOSE: 5,
     SalesStage.FOLLOW_UP: 5,

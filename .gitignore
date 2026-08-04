@@ -48,6 +48,12 @@ sales_tracking.db
 ngrok.log
 *.log
 
+# ── Piper TTS models (large ONNX binaries) ───────
+models/
+
+# ── Demo transcripts (may contain PII) ───────────
+transcripts/
+
 # ── Audio scratch / generated samples ───────────
 ambient_noise.wav
 assets/*.wav

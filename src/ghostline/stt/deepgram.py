@@ -32,9 +32,10 @@ __all__ = (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Deepgram endpointing default: 500ms of silence ends an utterance candidate.
-_DEFAULT_ENDPOINTING_MS: Final[str] = "500"
-# Default utterance-end window: 1000ms after the last word.
+# Deepgram endpointing: 300ms of silence ends an utterance candidate.
+# Lower = faster turn detection but more false positives.
+_DEFAULT_ENDPOINTING_MS: Final[str] = "300"
+# Utterance-end window: minimum 1000ms (Deepgram API requirement).
 _DEFAULT_UTTERANCE_END_MS: Final[str] = "1000"
 # Heartbeat cadence.
 _DEFAULT_HEARTBEAT_S: Final[float] = 30.0

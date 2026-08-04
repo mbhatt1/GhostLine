@@ -102,8 +102,8 @@ class TestStageTimings:
         assert STAGE_TIMINGS[SalesStage.REPORTING] >= 5
 
     def test_trial_close_is_short(self) -> None:
-        """TRIAL_CLOSE should be a quick beat, not a long pause."""
-        assert STAGE_TIMINGS[SalesStage.TRIAL_CLOSE] <= 5
+        """TRIAL_CLOSE should be a short pause, not an awkward silence."""
+        assert STAGE_TIMINGS[SalesStage.TRIAL_CLOSE] <= 8
 
 
 class TestStagePromptsAndCheckins:

@@ -21,11 +21,11 @@ __all__ = (
 )
 
 # Duration (seconds) the TwiML <Pause> keeps the call alive after the
-# <Stream> ends. 300s matches the legacy behaviour.
-_PAUSE_SECONDS: Final[int] = 300
+# <Stream> ends. 600s = 10 minutes, enough for a full social-engineering call.
+_PAUSE_SECONDS: Final[int] = 600
 # Voice used by the <Say> preamble before <Connect><Stream>.
 _SAY_VOICE: Final[str] = "alice"
-_SAY_TEXT: Final[str] = "Please hold while we connect you."
+_SAY_TEXT: Final[str] = ""
 
 
 @dataclass(slots=True, frozen=True)
@@ -71,16 +71,20 @@ def build_stream_twiml(stream_ws_url: str) -> str:
     the ``<Stream url="...">`` attribute.
     """
     safe_url = saxutils.escape(stream_ws_url)
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        "<Response>\n"
-        f'  <Say voice="{_SAY_VOICE}">{_SAY_TEXT}</Say>\n'
-        "  <Connect>\n"
-        f'    <Stream url="{safe_url}"/>\n'
-        "  </Connect>\n"
-        f'  <Pause length="{_PAUSE_SECONDS}"/>\n'
-        "</Response>"
-    )
+    parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<Response>",
+    ]
+    if _SAY_TEXT:
+        parts.append(f'  <Say voice="{_SAY_VOICE}">{_SAY_TEXT}</Say>')
+    parts += [
+        "  <Connect>",
+        f'    <Stream url="{safe_url}"/>',
+        "  </Connect>",
+        f'  <Pause length="{_PAUSE_SECONDS}"/>',
+        "</Response>",
+    ]
+    return "\n".join(parts)
 
 
 def build_voice_twiml(stream_ws_url: str) -> str:

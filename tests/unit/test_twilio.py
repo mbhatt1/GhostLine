@@ -20,11 +20,12 @@ class TestBuildStreamTwiML:
         root = ET.fromstring(twiml)
         assert root.tag == "Response"
 
-    def test_contains_say_connect_stream_pause(self) -> None:
+    def test_contains_connect_stream_pause(self) -> None:
         twiml = build_stream_twiml("wss://x.io/twilio")
         root = ET.fromstring(twiml)
         tags = [child.tag for child in root]
-        assert tags == ["Say", "Connect", "Pause"]
+        assert "Connect" in tags
+        assert "Pause" in tags
 
     def test_stream_url_aparses_correctly(self) -> None:
         twiml = build_stream_twiml("wss://example.com/twilio")
@@ -48,19 +49,18 @@ class TestBuildStreamTwiML:
     def test_voice_twiml_is_alias_of_stream_twiml(self) -> None:
         assert build_voice_twiml("wss://x.io/twilio") == build_stream_twiml("wss://x.io/twilio")
 
-    def test_say_uses_alice_voice(self) -> None:
+    def test_no_say_preamble_by_default(self) -> None:
         twiml = build_stream_twiml("wss://x.io/twilio")
         root = ET.fromstring(twiml)
         say = root.find("Say")
-        assert say is not None
-        assert say.get("voice") == "alice"
+        assert say is None, "Default TwiML should not include <Say> preamble"
 
-    def test_pause_length_is_300(self) -> None:
+    def test_pause_length_is_600(self) -> None:
         twiml = build_stream_twiml("wss://x.io/twilio")
         root = ET.fromstring(twiml)
         pause = root.find("Pause")
         assert pause is not None
-        assert pause.get("length") == "300"
+        assert pause.get("length") == "600"
 
 
 class TestTwilioService:

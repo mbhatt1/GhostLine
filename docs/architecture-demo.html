@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostLine — Call Flow Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  h1 {
+    font-size: 1.4rem;
+    color: #888;
+    margin-bottom: 1.5rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  svg { filter: drop-shadow(0 0 40px rgba(0,200,255,0.05)); }
+
+  /* Nodes */
+  .node {
+    cursor: default;
+    transition: filter 0.3s;
+  }
+  .node rect, .node circle {
+    stroke-width: 1.5;
+    rx: 6;
+    ry: 6;
+  }
+  .node text {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    fill: #e0e0e0;
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+  .node .sublabel {
+    font-size: 8.5px;
+    fill: #777;
+  }
+
+  /* Glow on active */
+  .node.active rect, .node.active circle {
+    filter: drop-shadow(0 0 12px var(--glow));
+  }
+
+  /* Edges */
+  .edge {
+    fill: none;
+    stroke: #2a2a3a;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+  }
+
+  /* Animated packet */
+  .packet {
+    r: 4;
+    opacity: 0;
+  }
+
+  /* Status bar */
+  #status {
+    margin-top: 1.5rem;
+    font-size: 0.85rem;
+    color: #555;
+    height: 3.5rem;
+    text-align: center;
+    line-height: 1.6;
+    max-width: 700px;
+  }
+  #status .highlight { color: #00d4ff; }
+  #status .step-label { color: #888; font-size: 0.75rem; display: block; margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.1em; }
+
+  /* Controls */
+  #controls {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.8rem;
+  }
+  #controls button {
+    background: #1a1a2a;
+    border: 1px solid #333;
+    color: #aaa;
+    padding: 0.4rem 1.2rem;
+    font-family: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  #controls button:hover { border-color: #00d4ff; color: #00d4ff; }
+  #controls button.active { border-color: #00d4ff; color: #00d4ff; background: #0d1a2a; }
+</style>
+</head>
+<body>
+
+<h1>GhostLine &mdash; E2E Call Flow</h1>
+
+<svg width="820" height="420" viewBox="0 0 820 420">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,3 L0,6" fill="#2a2a3a" />
+    </marker>
+    <marker id="arrow-active" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,3 L0,6" fill="#00d4ff" />
+    </marker>
+  </defs>
+
+  <!-- Edges (drawn first, under nodes) -->
+  <!-- Operator → Twilio -->
+  <path id="e-op-tw" class="edge" d="M145,100 L255,100" marker-end="url(#arrow)" />
+  <!-- Twilio → Target -->
+  <path id="e-tw-tgt" class="edge" d="M375,100 L485,100" marker-end="url(#arrow)" />
+  <!-- Target → Twilio (return) -->
+  <path id="e-tgt-tw" class="edge" d="M485,130 L375,130" marker-end="url(#arrow)" />
+  <!-- Twilio → ngrok -->
+  <path id="e-tw-ng" class="edge" d="M315,145 L315,195" marker-end="url(#arrow)" />
+  <!-- ngrok → Server -->
+  <path id="e-ng-sv" class="edge" d="M315,245 L315,285" marker-end="url(#arrow)" />
+  <!-- Server → Deepgram -->
+  <path id="e-sv-dg" class="edge" d="M245,320 L145,320" marker-end="url(#arrow)" />
+  <!-- Server → LLM -->
+  <path id="e-sv-llm" class="edge" d="M315,350 L315,380" marker-end="url(#arrow)" />
+  <!-- Deepgram → Server (return text) -->
+  <path id="e-dg-sv" class="edge" d="M145,340 L245,340" marker-end="url(#arrow)" />
+  <!-- LLM → Server (return text) -->
+  <path id="e-llm-sv" class="edge" d="M340,395 L385,365" marker-end="url(#arrow)" />
+  <!-- Server → ElevenLabs -->
+  <path id="e-sv-el" class="edge" d="M385,320 L485,320" marker-end="url(#arrow)" />
+  <!-- ElevenLabs → Server (return audio) -->
+  <path id="e-el-sv" class="edge" d="M485,340 L385,340" marker-end="url(#arrow)" />
+  <!-- Server → ngrok (return) -->
+  <path id="e-sv-ng" class="edge" d="M340,285 L340,245" marker-end="url(#arrow)" />
+  <!-- ngrok → Twilio (return) -->
+  <path id="e-ng-tw" class="edge" d="M340,195 L340,145" marker-end="url(#arrow)" />
+  <!-- SQLite (evidence) -->
+  <path id="e-sv-db" class="edge" d="M315,350 L220,390" marker-end="url(#arrow)" />
+
+  <!-- Nodes -->
+  <!-- Operator -->
+  <g class="node" id="n-operator" style="--glow: #6366f1">
+    <rect x="30" y="80" width="115" height="45" fill="#12122a" stroke="#6366f1" />
+    <text x="87" y="97">Operator CLI</text>
+    <text x="87" y="112" class="sublabel">ghostline call</text>
+  </g>
+
+  <!-- Twilio -->
+  <g class="node" id="n-twilio" style="--glow: #f43f5e">
+    <rect x="255" y="80" width="120" height="60" fill="#1a1015" stroke="#f43f5e" />
+    <text x="315" y="100">Twilio</text>
+    <text x="315" y="115" class="sublabel">PSTN + Media</text>
+    <text x="315" y="128" class="sublabel">Streams (WSS)</text>
+  </g>
+
+  <!-- Target -->
+  <g class="node" id="n-target" style="--glow: #f59e0b">
+    <rect x="485" y="80" width="115" height="45" fill="#1a1810" stroke="#f59e0b" />
+    <text x="542" y="97">Target</text>
+    <text x="542" y="112" class="sublabel">handset</text>
+  </g>
+
+  <!-- ngrok -->
+  <g class="node" id="n-ngrok" style="--glow: #22c55e">
+    <rect x="270" y="195" width="90" height="45" fill="#101a12" stroke="#22c55e" />
+    <text x="315" y="212">ngrok</text>
+    <text x="315" y="227" class="sublabel">WSS tunnel</text>
+  </g>
+
+  <!-- Server -->
+  <g class="node" id="n-server" style="--glow: #00d4ff">
+    <rect x="245" y="285" width="140" height="60" fill="#0d1520" stroke="#00d4ff" />
+    <text x="315" y="305">FastAPI Server</text>
+    <text x="315" y="320" class="sublabel">port 8000</text>
+    <text x="315" y="333" class="sublabel">call session</text>
+  </g>
+
+  <!-- Deepgram -->
+  <g class="node" id="n-deepgram" style="--glow: #a855f7">
+    <rect x="30" y="305" width="115" height="45" fill="#15101a" stroke="#a855f7" />
+    <text x="87" y="322">Deepgram</text>
+    <text x="87" y="337" class="sublabel">STT (nova-2)</text>
+  </g>
+
+  <!-- LLM -->
+  <g class="node" id="n-llm" style="--glow: #ec4899">
+    <rect x="270" y="380" width="90" height="35" fill="#1a1018" stroke="#ec4899" />
+    <text x="315" y="401">LLM</text>
+  </g>
+
+  <!-- ElevenLabs -->
+  <g class="node" id="n-elevenlabs" style="--glow: #14b8a6">
+    <rect x="485" y="305" width="115" height="45" fill="#0d1a18" stroke="#14b8a6" />
+    <text x="542" y="322">ElevenLabs</text>
+    <text x="542" y="337" class="sublabel">TTS voice</text>
+  </g>
+
+  <!-- SQLite -->
+  <g class="node" id="n-sqlite" style="--glow: #78716c">
+    <rect x="145" y="378" width="90" height="30" fill="#141210" stroke="#78716c" />
+    <text x="190" y="397">SQLite</text>
+  </g>
+
+  <!-- OOB boundary -->
+  <rect x="20" y="65" width="220" height="350" fill="none" stroke="#333" stroke-dasharray="4,4" rx="8" />
+  <text x="30" y="58" font-family="monospace" font-size="9" fill="#444">OPERATOR LAN (OOB)</text>
+
+  <rect x="245" y="65" width="160" height="85" fill="none" stroke="#333" stroke-dasharray="4,4" rx="8" />
+  <text x="255" y="58" font-family="monospace" font-size="9" fill="#444">CLOUD</text>
+
+  <!-- Packets (animated dots) -->
+  <circle class="packet" id="p1" fill="#f59e0b" />
+  <circle class="packet" id="p2" fill="#a855f7" />
+  <circle class="packet" id="p3" fill="#ec4899" />
+  <circle class="packet" id="p4" fill="#14b8a6" />
+  <circle class="packet" id="p5" fill="#00d4ff" />
+</svg>
+
+<div id="status">
+  <span class="step-label">Ready</span>
+  Press <span class="highlight">Play</span> to animate the call flow
+</div>
+
+<div id="controls">
+  <button id="btn-play">Play</button>
+  <button id="btn-loop">Loop</button>
+</div>
+
+<script>
+const steps = [
+  {
+    label: "Step 1 — Operator initiates call",
+    desc: "CLI sends <span class='highlight'>Twilio REST API</span> request to place outbound PSTN call",
+    edges: ["e-op-tw"],
+    nodes: ["n-operator", "n-twilio"],
+    packet: { id: "p1", path: "e-op-tw", color: "#6366f1", dur: 800 },
+  },
+  {
+    label: "Step 2 — Call connects to target",
+    desc: "Twilio dials target handset over <span class='highlight'>PSTN</span>. Media stream opens over WSS.",
+    edges: ["e-tw-tgt"],
+    nodes: ["n-twilio", "n-target"],
+    packet: { id: "p1", path: "e-tw-tgt", color: "#f43f5e", dur: 800 },
+  },
+  {
+    label: "Step 3 — Target speaks",
+    desc: "Voice audio (u-law 8kHz) flows: Target &rarr; Twilio &rarr; <span class='highlight'>ngrok tunnel</span> &rarr; local server",
+    edges: ["e-tgt-tw", "e-tw-ng", "e-ng-sv"],
+    nodes: ["n-target", "n-twilio", "n-ngrok", "n-server"],
+    packet: { id: "p1", path: "e-tgt-tw", color: "#f59e0b", dur: 600 },
+  },
+  {
+    label: "Step 4 — Speech-to-text",
+    desc: "Server forwards u-law frames to <span class='highlight'>Deepgram</span>. Returns real-time transcript.",
+    edges: ["e-sv-dg", "e-dg-sv"],
+    nodes: ["n-server", "n-deepgram"],
+    packet: { id: "p2", path: "e-sv-dg", color: "#a855f7", dur: 700 },
+  },
+  {
+    label: "Step 5 — LLM inference",
+    desc: "Transcript + playbook stage + persona &rarr; <span class='highlight'>Agents SDK</span> generates response. Logged to SQLite.",
+    edges: ["e-sv-llm", "e-llm-sv", "e-sv-db"],
+    nodes: ["n-server", "n-llm", "n-sqlite"],
+    packet: { id: "p3", path: "e-sv-llm", color: "#ec4899", dur: 700 },
+  },
+  {
+    label: "Step 6 — Text-to-speech",
+    desc: "Response text &rarr; <span class='highlight'>ElevenLabs</span> synthesizes cloned voice audio. Returns PCM.",
+    edges: ["e-sv-el", "e-el-sv"],
+    nodes: ["n-server", "n-elevenlabs"],
+    packet: { id: "p4", path: "e-sv-el", color: "#14b8a6", dur: 700 },
+  },
+  {
+    label: "Step 7 — Agent speaks",
+    desc: "PCM &rarr; u-law &rarr; server &rarr; <span class='highlight'>ngrok</span> &rarr; Twilio &rarr; target hears cloned voice",
+    edges: ["e-sv-ng", "e-ng-tw", "e-tw-tgt"],
+    nodes: ["n-server", "n-ngrok", "n-twilio", "n-target"],
+    packet: { id: "p5", path: "e-sv-ng", color: "#00d4ff", dur: 600 },
+  },
+];
+
+const statusEl = document.getElementById("status");
+const btnPlay = document.getElementById("btn-play");
+const btnLoop = document.getElementById("btn-loop");
+let running = false;
+let looping = false;
+
+function resetAll() {
+  document.querySelectorAll(".node").forEach(n => n.classList.remove("active"));
+  document.querySelectorAll(".edge").forEach(e => {
+    e.style.stroke = "#2a2a3a";
+    e.style.strokeWidth = "1.5";
+    e.setAttribute("marker-end", "url(#arrow)");
+  });
+  document.querySelectorAll(".packet").forEach(p => { p.style.opacity = 0; });
+}
+
+function animatePacket(cfg) {
+  return new Promise(resolve => {
+    const packet = document.getElementById(cfg.id);
+    const path = document.getElementById(cfg.path);
+    const len = path.getTotalLength();
+    packet.setAttribute("fill", cfg.color);
+    packet.style.opacity = 1;
+
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min((now - start) / cfg.dur, 1);
+      const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const pt = path.getPointAtLength(eased * len);
+      packet.setAttribute("cx", pt.x);
+      packet.setAttribute("cy", pt.y);
+      if (t < 1) {
+        requestAnimationFrame(tick);
+      } else {
+        packet.style.opacity = 0;
+        resolve();
+      }
+    }
+    requestAnimationFrame(tick);
+  });
+}
+
+async function playStep(step, idx) {
+  resetAll();
+  step.nodes.forEach(id => document.getElementById(id)?.classList.add("active"));
+  step.edges.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.style.stroke = "#00d4ff";
+      el.style.strokeWidth = "2.5";
+      el.setAttribute("marker-end", "url(#arrow-active)");
+    }
+  });
+  statusEl.innerHTML = `<span class="step-label">${step.label}</span>${step.desc}`;
+  await animatePacket(step.packet);
+  await new Promise(r => setTimeout(r, 600));
+}
+
+async function play() {
+  if (running) return;
+  running = true;
+  btnPlay.classList.add("active");
+  do {
+    for (let i = 0; i < steps.length; i++) {
+      await playStep(steps[i], i);
+    }
+    if (looping) {
+      resetAll();
+      statusEl.innerHTML = `<span class="step-label">Loop restarting</span>Target speaks again &mdash; the loop continues`;
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  } while (looping);
+  resetAll();
+  statusEl.innerHTML = `<span class="step-label">Complete</span>Full call loop demonstrated. Press <span class="highlight">Play</span> to replay.`;
+  running = false;
+  btnPlay.classList.remove("active");
+}
+
+btnPlay.addEventListener("click", play);
+btnLoop.addEventListener("click", () => {
+  looping = !looping;
+  btnLoop.classList.toggle("active", looping);
+  if (looping && !running) play();
+});
+</script>
+</body>
+</html>
